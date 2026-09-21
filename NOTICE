@@ -1,0 +1,17 @@
+PI WEB Research Library
+
+Maintained by Marc Kassubeck (CompN3rd).
+Standalone extraction and plugin migration from CompN3rd/pi-web,
+branch feat/research-library-pi, source commit
+c8b15ec4a29f5a2cb0c9a25691d81c6c949bc476.
+The feature branch is retired after standalone extraction.
+
+Extracted research code originated in pi-web-plugins/research-library/,
+extensions/research-library.ts and extensions/research-library-core/.
+The upstream MIT license and Federico Jaramillo Martinez copyright notice
+are retained in LICENSE. Standalone additions copyright (c) 2026 Marc Kassubeck.
+
+PDF.js is distributed under the Apache License 2.0. Its license is included
+with the built browser assets at dist/browser/pdfjs/LICENSE. Included CMaps,
+standard fonts, WASM and ICC assets retain their accompanying license files.
+No research PDFs, source notes or user annotations are distributed.

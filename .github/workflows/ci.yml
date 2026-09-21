@@ -1,0 +1,48 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-2022]
+        node: [22.19.0, 24]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: Checkout pinned upstream host
+        uses: actions/checkout@v5
+        with:
+          repository: jmfederico/pi-web
+          ref: 60a29acbfc710908e73b0df9857cb63b53b672d3
+          path: .host-package/source
+      - name: Build host artifact
+        working-directory: .host-package/source
+        shell: bash
+        run: |
+          npm ci
+          npm run build
+          npm pack --ignore-scripts --pack-destination ..
+      - name: Prepare source-built dependency
+        shell: bash
+        run: |
+          node -e "require('node:fs').renameSync('.host-package/jmfederico-pi-web-1.202609.0.tgz', '.host-package/pi-web.tgz')"
+          node scripts/refresh-host-integrity.mjs
+      - run: npm ci
+      - run: npm run verify
+      - name: Install test browser
+        if: runner.os == 'Linux' && matrix.node == '24'
+        run: npx playwright install --with-deps chromium
+      - name: Real-browser package smoke
+        if: runner.os == 'Linux' && matrix.node == '24'
+        run: npm run smoke:browser

@@ -1,0 +1,87 @@
+{
+  "name": "@compn3rd/pi-web-research-library",
+  "version": "0.1.0",
+  "description": "Local research papers, PDF annotations and bounded Pi tools for PI WEB.",
+  "license": "MIT",
+  "author": "Marc Kassubeck",
+  "type": "module",
+  "files": [
+    "dist",
+    "docs",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "validate:dist": "node scripts/validate-dist.mjs",
+    "pack:validate": "node scripts/validate-pack.mjs",
+    "verify": "npm run typecheck && npm run lint && npm test && npm run build && npm run validate:dist && npm run pack:validate",
+    "prepack": "npm run build",
+    "smoke:browser": "npm run build && node scripts/smoke-browser.mjs",
+    "changeset": "changeset",
+    "changelog:status": "changeset status"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.31.1",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@eslint/js": "^10.0.1",
+    "@jmfederico/pi-web": "file:.host-package/pi-web.tgz",
+    "@types/node": "^24.13.3",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.6.0",
+    "globals": "^17.7.0",
+    "happy-dom": "^20.11.1",
+    "lit": "^3.3.3",
+    "pdfjs-dist": "6.2.108",
+    "playwright": "^1.63.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.63.0",
+    "vitest": "^4.1.10"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CompN3rd/pi-web-research-library.git"
+  },
+  "bugs": {
+    "url": "https://github.com/CompN3rd/pi-web-research-library/issues"
+  },
+  "homepage": "https://github.com/CompN3rd/pi-web-research-library#readme",
+  "keywords": [
+    "pi-package",
+    "pi-web",
+    "research",
+    "pdf",
+    "annotations"
+  ],
+  "piWeb": {
+    "plugins": [
+      {
+        "id": "research-library",
+        "browserRoot": "dist/browser",
+        "module": "dist/browser/pi-web-plugin.js",
+        "serverModule": "dist/server-plugin.js",
+        "machineSpecific": true
+      }
+    ]
+  },
+  "pi": {
+    "extensions": [
+      "dist/companion.js"
+    ]
+  }
+}
