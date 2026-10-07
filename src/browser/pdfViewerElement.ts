@@ -2,6 +2,7 @@ import { normalizedRect, type PdfRect } from "../domain/pdf.js";
 import { pdfViewerTemplate } from "./pdfViewerTemplate.js";
 import { PdfContinuousLayout } from "./pdfContinuousLayout.js";
 import { PdfPageSurface } from "./pdfPageSurface.js";
+import { PdfThumbnails } from "./pdfThumbnails.js";
 import { selectedTextRange, textSelectionAnchor, type TextSelectionAnchor } from "./pdfTextSelection.js";
 import { findPdfText, matchInTextRun, pdfTextStrings, PDF_FIND_MAX_PAGES, PDF_FIND_MAX_HITS, PDF_FIND_MAX_PAGE_CHARACTERS, type PdfFitMode, type PdfFindHit } from "./pdfReading.js";
 import { quoteFromTextItems, textItemsToQuoteItems, type PdfTextContentItem } from "./pdfQuote.js";
@@ -106,6 +107,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
   private readonly surfaces = new Map<number, PdfPageSurface>();
   private layout: PdfContinuousLayout | undefined;
   private readonly stage: HTMLElement;
+  private readonly thumbnails: PdfThumbnails;
   private scrollFrame: number | undefined;
   private windowGeneration = 0;
   private layoutChanging = false;
@@ -173,6 +175,12 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
     this.root.innerHTML = pdfViewerTemplate();
     this.stage = required(this.root.querySelector(".stage"), HTMLElement);
     this.stage.replaceChildren(this.emptySurface.element);
+    this.thumbnails = new PdfThumbnails(
+      this.control("[data-thumbnails]"), required(this.root.querySelector("[data-thumbnails-toggle]"), HTMLButtonElement),
+      canvas => this.contextFactory(canvas), page => { this.showPage(page); },
+      (number, page) => { if (!this.surfaces.has(number)) page.cleanup?.(); },
+    );
+    this.thumbnails.setDocument(undefined);
     this.statusElement = required(this.root.querySelector("[data-status]"), HTMLElement);
     this.fallback = required(this.root.querySelector("[data-open-pdf]"), HTMLAnchorElement);
     this.previousButton = required(this.root.querySelector("[data-previous]"), HTMLButtonElement);
@@ -473,6 +481,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
       }
       // PDF.js 6 owns destruction on the loading task, even after its document resolves.
       this.document = document;
+      this.thumbnails.setDocument(document);
       this.pageNumber = Math.max(1, Math.min(document.numPages, this.pageNumber));
       await this.renderCurrentPage(generation, keepPosition);
     } catch (error) {
@@ -652,6 +661,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
   }
 
   private async dispose(expectedGeneration: number): Promise<void> {
+    this.thumbnails.setDocument(undefined);
     this.sourceAbort?.abort();
     this.sourceAbort = undefined;
     this.findGeneration++;
@@ -712,6 +722,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
 
   private updateControls(): void {
     const pages = this.document?.numPages ?? 0;
+    this.thumbnails.setCurrentPage(this.pageNumber);
     this.previousButton.disabled = pages === 0 || this.pageNumber <= 1;
     this.nextButton.disabled = pages === 0 || this.pageNumber >= pages;
     this.zoomOutButton.disabled = pages === 0 || this.zoom <= MIN_ZOOM;

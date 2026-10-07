@@ -28,6 +28,13 @@ export function pdfViewerTemplate(): string {
       .help { font-size:12px; line-height:1.6; opacity:.75; margin:8px 0 0; }
       .findbar { display:flex; align-items:center; flex-wrap:wrap; gap:6px; padding:8px 12px; border-bottom:1px solid var(--pi-border, #ccd0d7); }
       .findbar input { flex:1; min-width:120px; width:160px; } [data-find-status] { flex-basis:100%; font-size:12px; opacity:.8; }
+      .thumbnails { padding:8px 12px; border-bottom:1px solid var(--pi-border, #ccd0d7); flex-shrink:0; }
+      .thumbnail-controls { display:flex; align-items:center; flex-wrap:wrap; gap:4px; font-size:12px; }
+      .thumbnail-controls [role=status] { margin-right:auto; }
+      .thumbnail-list { display:flex; gap:8px; overflow:auto; padding:4px; max-height:170px; }
+      .thumbnail-list button { display:flex; flex-direction:column; align-items:center; justify-content:end; flex:0 0 120px; min-height:140px; border:1px solid var(--pi-border, #ccd0d7); }
+      .thumbnail-list [aria-current=page] { border:2px solid var(--pi-accent, #2965cc); background:var(--pi-bg-secondary, #2965cc22); }
+      .thumbnail-state { font-size:11px; line-height:1.3; }
       .text-tools { padding:8px 12px; border-bottom:1px solid var(--pi-border, #ccd0d7); }
       .text-tools p { margin:4px 0; } .text-tools label { display:block; }
       .text-tools select { display:block; width:100%; max-width:100%; }
@@ -79,6 +86,7 @@ export function pdfViewerTemplate(): string {
           <span class="page-total">/ <span data-page-count>0</span></span>
           <button class="icon" type="button" data-next aria-label="Next PDF page" title="Next page (→)">›</button>
         </div>
+        <button type="button" data-thumbnails-toggle aria-expanded="false" aria-controls="pdf-thumbnails">Pages</button>
         <select data-fit aria-label="PDF zoom" title="Page sizing"><option value="width">Fit width</option><option value="page">Fit page</option><option value="1">100%</option><option value="1.5">150%</option><option value="2">200%</option><option value="3">300%</option><option value="custom" hidden>Custom</option></select>
         <button type="button" data-text-toggle aria-expanded="false" aria-controls="text-tools">Annotate text</button>
         <button type="button" data-mark aria-pressed="false" aria-describedby="mark-instructions">Mark region</button>
@@ -93,6 +101,7 @@ export function pdfViewerTemplate(): string {
           <p class="help">← / → pages · Space scrolls across pages<br>G go to page · + / − zoom · 0 fit width<br>F focus · Esc close / cancel<br>Select text to copy or annotate. Mark a region to save evidence.<br>Page tones alter colors, not the original file.</p>
         </div></details>
       </div>
+      <nav id="pdf-thumbnails" class="thumbnails" data-thumbnails hidden aria-label="PDF page previews"></nav>
       <form id="pdf-find" class="findbar" data-find-bar hidden role="search" aria-label="Find in this PDF">
         <input data-find-input type="search" maxlength="200" placeholder="Find in this PDF…" aria-label="Find in PDF" autocomplete="off">
         <button type="submit" data-find-submit>Search</button>

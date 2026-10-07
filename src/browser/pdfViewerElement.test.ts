@@ -64,6 +64,25 @@ describe("ResearchLibraryPdfViewerElement", () => {
     expect(shadow(element, "[data-active-page=true] canvas", HTMLCanvasElement).getAttribute("aria-label")).toContain("page 2 of 2");
   });
 
+  it("connects page previews to continuous navigation and resets them on source teardown", async () => {
+    const harness = fakePdfJs(8);
+    const element = createViewer(); element.pdfJsLoader = harness.loader;
+    document.body.append(element); element.sourceUrl = "paper.pdf";
+    await statusIncludes(element, "Page 1 of 8");
+    shadowButton(element, "[data-thumbnails-toggle]").click(); await settle();
+    expect(element.shadowRoot?.querySelectorAll("[data-thumbnail-page]")).toHaveLength(6);
+    shadowButton(element, '[data-thumbnail-page="4"]').click();
+    await statusIncludes(element, "Page 4 of 8");
+    expect(element.currentPage).toBe(4);
+    expect(shadowButton(element, '[data-thumbnail-page="4"]').getAttribute("aria-current")).toBe("page");
+    element.showPage(8); await statusIncludes(element, "Page 8 of 8");
+    expect(shadowButton(element, '[data-thumbnail-page="8"]').getAttribute("aria-current")).toBe("page");
+    element.sourceUrl = undefined; await statusIncludes(element, "No PDF selected");
+    expect(shadow(element, "[data-thumbnails]", HTMLElement).hidden).toBe(true);
+    expect(shadowButton(element, "[data-thumbnails-toggle]").disabled).toBe(true);
+    expect(element.shadowRoot?.querySelectorAll("[data-thumbnail-page]")).toHaveLength(0);
+  });
+
   it("announces a rendered source so a pending evidence backlink can select its page", async () => {
     const harness = fakePdfJs(3);
     const element = createViewer(); element.pdfJsLoader = harness.loader;

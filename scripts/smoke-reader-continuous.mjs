@@ -79,6 +79,29 @@ export async function smokeContinuousReader({ browser, url, errors, fixture }) {
       });
       assert(Math.abs(continuity.gap - 20) < 2, "Adjacent pages share a continuous scroll coordinate space");
       await page.screenshot({ path: `.smoke/continuous-${device.name}.png`, fullPage: true });
+      await activate(reader.getByRole("button", { name: "Pages", exact: true }));
+      const previews = reader.getByRole("navigation", { name: "PDF page previews", exact: true });
+      await page.waitForFunction(() => {
+        const root = document.querySelector("pi-web-library-workbench").shadowRoot.querySelector("pi-web-research-library-pdf-viewer").shadowRoot;
+        return [...root.querySelectorAll('.thumbnail-list canvas')].filter(canvas => canvas.width > 0).length === 6
+          && [...root.querySelectorAll('.thumbnail-state')].every(state => state.textContent === "");
+      });
+      assert.equal(await previews.locator("canvas").count(), 6);
+      await page.screenshot({ path: `.smoke/thumbnails-${device.name}.png`, fullPage: true });
+      const sixth = previews.getByRole("button", { name: "Go to PDF page 6", exact: true });
+      if (device.hasTouch) await sixth.tap();
+      else { await previews.getByRole("button", { name: "Go to PDF page 5", exact: true }).focus(); await page.keyboard.press("Tab"); await page.keyboard.press("Enter"); }
+      await ready(6);
+      assert.equal(await sixth.getAttribute("aria-current"), "page");
+      await activate(previews.getByRole("button", { name: "Next previews", exact: true }));
+      await activate(previews.getByRole("button", { name: "Go to PDF page 8", exact: true })); await ready(8);
+      assert.equal(await previews.locator("canvas").count(), 2);
+      await activate(reader.getByRole("button", { name: "Reading focus", exact: true }));
+      await activate(previews.getByRole("button", { name: "Previous previews", exact: true }));
+      await activate(previews.getByRole("button", { name: "Go to PDF page 4", exact: true })); await ready(4);
+      await activate(previews.getByRole("button", { name: "Close page previews", exact: true }));
+      assert.equal(await previews.locator("canvas").count(), 0);
+      await activate(reader.getByRole("button", { name: "Exit reading focus", exact: true }));
       await jump(8); assert(await reader.locator("canvas").count() <= 3);
       assert.equal(await reader.locator('[data-page="1"]').count(), 0, "Distant page DOM is evicted");
       await jump(4);
@@ -106,7 +129,12 @@ export async function smokeContinuousReader({ browser, url, errors, fixture }) {
       const editor = panel.getByRole("complementary", { name: "Passage annotation", exact: true });
       const note = editor.getByLabel("Evidence note / question", { exact: true });
       const body = `Continuous comment ${device.name}`;
-      await note.fill(body); await activate(editor.getByRole("button", { name: "Save evidence", exact: true })); await idle();
+      await note.fill(body);
+      await activate(reader.getByRole("button", { name: "Pages", exact: true }));
+      await activate(previews.getByRole("button", { name: "Go to PDF page 5", exact: true })); await ready(5);
+      assert.equal(await note.inputValue(), body, "Thumbnail navigation preserves the open annotation draft");
+      await activate(previews.getByRole("button", { name: "Close page previews", exact: true }));
+      await activate(editor.getByRole("button", { name: "Save evidence", exact: true })); await idle();
       const saved = await page.evaluate(async body => (await window.researchPeer.request("evidence.list", { version: 1, payload: {} })).items.find(item => item.body === body), body);
       assert(saved && saved.page === 2 && saved.pdfSha256 && saved.rect);
       assert.equal(saved.quote, "Reading fixture - page 2");
@@ -129,7 +157,7 @@ export async function smokeContinuousReader({ browser, url, errors, fixture }) {
       assert(region && region.page === 4 && region.pdfSha256 === saved.pdfSha256);
       assert.deepEqual(region.rect, { x: .1, y: .1, width: .4, height: .1 });
       await disposeSmokeReader(page, reader);
-      checks.push(`${device.name} ${device.viewport.width}x${device.viewport.height} DPR 2: actual ${device.hasTouch ? "CDP touch swipes" : "mouse wheel"} across pages; normal 3-canvas eviction and expanded visible window at 50% focus zoom (6-page cap); mixed-size jumps; page-2 text save/backlink/edit with immutable anchor; page-4 keyboard region save`);
+      checks.push(`${device.name} ${device.viewport.width}x${device.viewport.height} DPR 2: actual ${device.hasTouch ? "CDP touch swipes" : "mouse wheel"} across pages; normal 3-canvas eviction and expanded visible window at 50% focus zoom (6-page cap); mixed-size jumps; lazy six-preview groups, desktop Tab/Enter and touch taps, active-page labels, focus navigation and close eviction; thumbnail jump preserves page-2 draft/anchor; page-2 text save/backlink/edit with immutable anchor; page-4 keyboard region save`);
     } catch (error) {
       await page.screenshot({ path: `.smoke/continuous-${device.name}-failure.png`, fullPage: true }).catch(() => {});
       console.error("Continuous reader:", await reader.locator("[data-status]").textContent().catch(() => "unavailable"));
