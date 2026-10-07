@@ -358,6 +358,69 @@ function addTextLayer(module: PdfJsModule): void {
   };
 }
 
+describe("text comments", () => {
+  it("refreshes tools opened before text finishes rendering and invalidates them on source replacement", async () => {
+    const harness = fakePdfJs(1); addTextLayer(harness.module);
+    const content = await pageAt(harness.pages, 0).getTextContent();
+    let resolve!: (value: typeof content) => void;
+    pageAt(harness.pages, 0).getTextContent.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const element = createViewer(); element.pdfJsLoader = harness.loader;
+    document.body.append(element); element.sourceUrl = "first.pdf"; await statusIncludes(element, "Page 1 of 1");
+    shadowButton(element, "[data-text-toggle]").click();
+    expect(shadow(element, "[data-selection-status]", HTMLElement).textContent).toContain("No selectable text is ready");
+    resolve(content); await settle();
+    expect(shadow(element, "[data-text-start]", HTMLSelectElement).disabled).toBe(false);
+    expect(shadow(element, "[data-text-preview]", HTMLElement).textContent).toBe("Inside the region");
+    expect(shadow(element, "[data-overlay]", HTMLElement).dataset["textSelecting"]).toBe("true");
+    element.sourceUrl = "second.pdf"; await settle();
+    expect(shadow(element, "[data-text-tools]", HTMLElement).hidden).toBe(true);
+    expect(shadow(element, "[data-overlay]", HTMLElement).dataset["textSelecting"]).toBe("false");
+  });
+
+  it("connects the passage picker to the same page/quote selection boundary and clears it on navigation", async () => {
+    const harness = fakePdfJs(2); addTextLayer(harness.module);
+    const element = createViewer(); element.pdfJsLoader = harness.loader;
+    const selections: ResearchPdfSelectionDetail[] = [];
+    element.addEventListener(researchPdfSelectionEventName, event => { selections.push(selectionDetail(event)); });
+    document.body.append(element); element.sourceUrl = "paper.pdf"; await settle();
+    shadowButton(element, "[data-text-toggle]").click();
+    expect(shadow(element, "[data-text-preview]", HTMLElement).textContent).toBe("Inside the region");
+    const end = shadow(element, "[data-text-end]", HTMLSelectElement);
+    end.value = "1"; end.dispatchEvent(new Event("change"));
+    expect(shadow(element, "[data-text-preview]", HTMLElement).textContent).toBe("Inside the region\nOutside the region");
+    // DOM tests supply geometry at the browser boundary; actual PDF geometry is
+    // separately exercised by the real-browser workbench smoke.
+    vi.spyOn(shadow(element, "canvas", HTMLCanvasElement), "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 1000, 800));
+    for (const span of element.shadowRoot?.querySelectorAll<HTMLElement>("[data-text-layer] span") ?? []) vi.spyOn(span, "getBoundingClientRect").mockReturnValue(new DOMRect(100, 80, 400, 80));
+    shadowButton(element, "[data-passage-comment]").click();
+    expect(selections).toEqual([{ page: 1, quote: "Inside the region\nOutside the region", rect: { x: .1, y: .1, width: .4, height: .1 } }]);
+    expect(shadow(element, "[data-text-tools]", HTMLElement).hidden).toBe(true);
+    shadowButton(element, "[data-text-toggle]").click();
+    element.showPage(2); await settle();
+    expect(shadow(element, "[data-text-tools]", HTMLElement).hidden).toBe(true);
+    shadowButton(element, "[data-passage-comment]").click();
+    expect(selections).toHaveLength(1);
+  });
+
+  it("reports missing selection and invalid picker order without emitting evidence", async () => {
+    const harness = fakePdfJs(1); addTextLayer(harness.module);
+    const element = createViewer(); element.pdfJsLoader = harness.loader;
+    const selected = vi.fn(); element.addEventListener(researchPdfSelectionEventName, selected);
+    document.body.append(element); element.sourceUrl = "paper.pdf"; await settle();
+    shadowButton(element, "[data-text-toggle]").click();
+    shadowButton(element, "[data-text-comment]").click();
+    expect(shadow(element, "[data-selection-status]", HTMLElement).textContent).toContain("Select text on this PDF page");
+    const start = shadow(element, "[data-text-start]", HTMLSelectElement), end = shadow(element, "[data-text-end]", HTMLSelectElement);
+    start.value = "1"; start.dispatchEvent(new Event("change")); expect(end.value).toBe("1");
+    end.value = "0"; end.dispatchEvent(new Event("change"));
+    shadowButton(element, "[data-passage-comment]").click();
+    expect(shadow(element, "[data-selection-status]", HTMLElement).textContent).toContain("at or after");
+    expect(selected).not.toHaveBeenCalled();
+    shadowButton(element, "[data-mark]").click();
+    expect(shadow(element, "[data-text-tools]", HTMLElement).hidden).toBe(true);
+  });
+});
+
 describe("region marking", () => {
   it("offers primary keyboard marking with move, resize, commit and cancel", async () => {
     const harness = fakePdfJs(2);

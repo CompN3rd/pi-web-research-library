@@ -28,6 +28,11 @@ export function pdfViewerTemplate(): string {
       .help { font-size:12px; line-height:1.6; opacity:.75; margin:8px 0 0; }
       .findbar { display:flex; align-items:center; flex-wrap:wrap; gap:6px; padding:8px 12px; border-bottom:1px solid var(--pi-border, #ccd0d7); }
       .findbar input { flex:1; min-width:120px; width:160px; } [data-find-status] { flex-basis:100%; font-size:12px; opacity:.8; }
+      .text-tools { padding:8px 12px; border-bottom:1px solid var(--pi-border, #ccd0d7); }
+      .text-tools p { margin:4px 0; } .text-tools label { display:block; }
+      .text-tools select { display:block; width:100%; max-width:100%; }
+      .text-tools blockquote { max-height:5em; overflow:auto; margin:6px 0; white-space:pre-wrap; }
+      .text-tools button { border-color:var(--pi-border, #ccd0d7); }
       .viewport { overflow:auto; overscroll-behavior:contain; height:clamp(320px, 72dvh, 1100px); background:#e5e7eb; scrollbar-gutter:stable; outline-offset:-3px; }
       .reader:modal .viewport { height:auto; flex:1; min-height:0; }
       @media(max-width:800px) { :host([annotation-open]) .reader:not(:modal) .viewport { height:38dvh; min-height:180px; } }
@@ -54,7 +59,7 @@ export function pdfViewerTemplate(): string {
       .marker[data-kind=note] { border-color:var(--pi-purple, #a371d1); background:#d2a8ff26; }
       .marker[data-evidence-status=resolved] { border-style:dashed; opacity:.65; }
       .marker[data-active=true] { border:2px solid var(--pi-accent, #58a6ff); background:#58a6ff40; }
-      .overlay[data-marking=on] .marker { pointer-events:none; }
+      .overlay[data-marking=on] .marker, .overlay[data-text-selecting=true] .marker { pointer-events:none; }
       footer { display:flex; gap:8px; align-items:center; justify-content:space-between; padding:6px 12px; font-size:12px; border-top:1px solid var(--pi-border, #ccd0d7); }
       [data-status] { font-variant-numeric:tabular-nums; } [data-state=error], [data-text-status] { color:var(--pi-danger, #b42318); }
       [data-text-status]:empty { display:none; } [data-text-status] { padding:6px 12px; font-size:12px; }
@@ -73,6 +78,7 @@ export function pdfViewerTemplate(): string {
           <button class="icon" type="button" data-next aria-label="Next PDF page" title="Next page (→)">›</button>
         </div>
         <select data-fit aria-label="PDF zoom" title="Page sizing"><option value="width">Fit width</option><option value="page">Fit page</option><option value="1">100%</option><option value="1.5">150%</option><option value="2">200%</option><option value="3">300%</option><option value="custom" hidden>Custom</option></select>
+        <button type="button" data-text-toggle aria-expanded="false" aria-controls="text-tools">Annotate text</button>
         <button type="button" data-mark aria-pressed="false" aria-describedby="mark-instructions">Mark region</button>
         <button type="button" data-find-toggle aria-expanded="false" aria-controls="pdf-find" title="Find in PDF (Ctrl/⌘ F)">Find</button>
         <button type="button" data-focus aria-pressed="false" aria-label="Reading focus" title="Distraction-free reading (F)">⛶ <span class="focus-label">Focus</span></button>
@@ -82,7 +88,7 @@ export function pdfViewerTemplate(): string {
           <label><input type="checkbox" data-markers checked> Show evidence markers</label>
           <hr><button type="button" data-reload>Reload PDF</button>
           <a data-open-pdf target="_blank" rel="noopener noreferrer" hidden aria-disabled="true" tabindex="-1">Open PDF</a>
-          <p class="help">← / → pages · Space scrolls, then turns page<br>G go to page · + / − zoom · 0 fit width<br>F focus · Esc close / cancel<br>Select text to copy. Mark a region to save evidence.<br>Page tones alter colors, not the original file.</p>
+          <p class="help">← / → pages · Space scrolls, then turns page<br>G go to page · + / − zoom · 0 fit width<br>F focus · Esc close / cancel<br>Select text to copy or annotate. Mark a region to save evidence.<br>Page tones alter colors, not the original file.</p>
         </div></details>
       </div>
       <form id="pdf-find" class="findbar" data-find-bar hidden role="search" aria-label="Find in this PDF">
@@ -93,6 +99,17 @@ export function pdfViewerTemplate(): string {
         <span data-find-status role="status" aria-live="polite">Search this PDF without creating an index.</span>
       </form>
       <div class="mark-hint" id="mark-instructions" data-mark-hint hidden>Drag with mouse or touch. Or use arrows to move the region, Shift+arrows to resize, Enter to annotate. Esc cancels.<button type="button" data-mark-cancel>Cancel</button></div>
+      <section id="text-tools" class="text-tools" data-text-tools hidden aria-label="Text annotation">
+        <p>Select text on this page, then <button type="button" data-text-comment>Comment on selection</button>. <button type="button" data-text-close>Close text tools</button></p>
+        <details data-passage-picker><summary>Choose passage with keyboard or touch</summary>
+          <p>Choose the first and last text runs in PDF reading order (whole runs, one page). Review the quote before saving.</p>
+          <label>Passage start<select data-text-start aria-label="Passage start"></select></label>
+          <label>Passage end<select data-text-end aria-label="Passage end"></select></label>
+          <blockquote data-text-preview></blockquote>
+          <button type="button" data-passage-comment>Comment on passage</button>
+        </details>
+        <p data-selection-status role="status" aria-live="polite"></p>
+      </section>
       <div data-text-status role="status"></div>
       <div class="viewport" tabindex="0" role="region" aria-label="PDF page. Select text to copy; use arrow keys to change pages.">
         <div class="stage"><div class="page">

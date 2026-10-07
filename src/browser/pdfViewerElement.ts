@@ -1,5 +1,6 @@
 import { normalizedRect, type PdfRect } from "../domain/pdf.js";
 import { pdfViewerTemplate } from "./pdfViewerTemplate.js";
+import { selectedTextRange, textSelectionAnchor, type TextSelectionAnchor } from "./pdfTextSelection.js";
 import { fittedPdfScale, findPdfText, matchInTextRun, pdfTextStrings, PDF_FIND_MAX_PAGES, PDF_FIND_MAX_HITS, PDF_FIND_MAX_PAGE_CHARACTERS, type PdfFitMode, type PdfFindHit } from "./pdfReading.js";
 import { quoteFromTextItems, textItemsToQuoteItems, type PdfTextContentItem } from "./pdfQuote.js";
 import type { PDFDocumentProxy } from "pdfjs-dist";
@@ -176,6 +177,21 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
     this.fitSelect = required(this.root.querySelector("[data-fit]"), HTMLSelectElement);
     this.findInput = required(this.root.querySelector("[data-find-input]"), HTMLInputElement);
     this.findStatus = required(this.root.querySelector("[data-find-status]"), HTMLElement);
+    for (const selector of ["[data-text-toggle]", "[data-text-comment]"]) {
+      // Keep the native selection when a mouse/touch activates these controls.
+      this.control(selector).addEventListener("pointerdown", event => { event.preventDefault(); });
+    }
+    this.control("[data-text-toggle]").addEventListener("click", () => { this.toggleTextTools(this.control("[data-text-tools]").hidden === true); });
+    this.control("[data-text-close]").addEventListener("click", () => { this.toggleTextTools(false); this.control("[data-text-toggle]").focus(); });
+    this.control("[data-text-comment]").addEventListener("click", () => { this.commentOnText(false); });
+    this.control("[data-passage-comment]").addEventListener("click", () => { this.commentOnText(true); });
+    this.control("[data-text-start]").addEventListener("change", () => {
+      const start = required(this.root.querySelector("[data-text-start]"), HTMLSelectElement);
+      const end = required(this.root.querySelector("[data-text-end]"), HTMLSelectElement);
+      if (Number(end.value) < Number(start.value)) end.value = start.value;
+      this.previewPassage();
+    });
+    this.control("[data-text-end]").addEventListener("change", () => { this.previewPassage(); });
     this.fitSelect.addEventListener("change", () => {
       const mode = this.fitSelect.value;
       if (mode === "width" || mode === "page") {
@@ -258,6 +274,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
       return;
     }
     this.marking = armed;
+    if (armed) this.toggleTextTools(false);
     if (!armed) this.cancelSelection();
     else {
       this.keyboardRegion = { x: .1, y: .1, width: .4, height: .1 };
@@ -438,6 +455,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
     const document = this.document;
     if (document === undefined) return;
     const renderGeneration = ++this.renderGeneration;
+    this.toggleTextTools(false);
     const position = { top: this.viewportElement.scrollTop / this.renderedZoom, left: this.viewportElement.scrollLeft / this.renderedZoom };
     this.setMarking(false);
     this.textLayer?.cancel(); this.textLayer = undefined; this.textContainer.replaceChildren();
@@ -523,9 +541,12 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
       await layer.render();
       if (!current()) return;
       this.paintFindMatches();
+      if (this.control("[data-text-tools]").hidden !== true) this.toggleTextTools(true);
       this.control("[data-text-status]").textContent = layer.textContentItemsStr.join("").trim() === "" ? "No selectable text on this page. Scanned pages require OCR outside this reader." : "";
     } catch (error) {
       if (!current() || isCancellationError(error)) return;
+      this.textLayer = undefined; this.textContainer.replaceChildren();
+      if (this.control("[data-text-tools]").hidden !== true) this.toggleTextTools(true);
       this.control("[data-text-status]").textContent = `Text selection unavailable: ${formatError(error)}. The page remains readable; use Open PDF for another viewer.`;
     }
   }
@@ -534,6 +555,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
     this.sourceAbort?.abort();
     this.sourceAbort = undefined;
     this.findGeneration++;
+    this.toggleTextTools(false);
     this.textLayer?.cancel(); this.textLayer = undefined; this.textContainer.replaceChildren();
     this.pdfjs = undefined;
     this.setMarking(false);
@@ -588,6 +610,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
     this.zoomOutButton.disabled = pages === 0 || this.zoom <= MIN_ZOOM;
     this.zoomInButton.disabled = pages === 0 || this.zoom >= MAX_ZOOM;
     this.markButton.disabled = pages === 0 || this.statusElement.dataset["state"] !== "ready";
+    required(this.root.querySelector("[data-text-toggle]"), HTMLButtonElement).disabled = this.markButton.disabled;
     this.pageInput.disabled = pages === 0;
     this.pageInput.max = String(Math.max(1, pages));
     this.pageInput.value = String(this.pageNumber);
@@ -615,6 +638,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
     if (key === "escape") {
       event.preventDefault();
       if (this.marking) this.setMarking(false);
+      else if (this.control("[data-text-tools]").hidden !== true) { this.toggleTextTools(false); this.control("[data-text-toggle]").focus(); }
       else if (required(this.root.querySelector("[data-more]"), HTMLDetailsElement).open) { this.closeOptions(); this.control("[data-more] summary").focus(); }
       else if (this.control("[data-find-bar]").hidden !== true) this.toggleFind(false);
       else this.setReadingFocus(false);
@@ -776,6 +800,75 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
       this.viewportElement.scrollTop += box.top - view.top - this.viewportElement.clientHeight / 3;
       this.viewportElement.scrollLeft += box.left - view.left - this.viewportElement.clientWidth / 3;
     }
+  }
+
+  private toggleTextTools(open: boolean): void {
+    this.control("[data-text-tools]").hidden = !open;
+    this.overlay.dataset["textSelecting"] = String(open);
+    this.control("[data-text-toggle]").setAttribute("aria-expanded", String(open));
+    this.control("[data-selection-status]").textContent = "";
+    this.control("[data-text-preview]").textContent = "";
+    const start = required(this.root.querySelector("[data-text-start]"), HTMLSelectElement);
+    const end = required(this.root.querySelector("[data-text-end]"), HTMLSelectElement);
+    start.replaceChildren(); end.replaceChildren();
+    if (!open) return;
+    this.setMarking(false);
+    const runs = this.textLayer?.textContentItemsStr ?? [];
+    const selectable = runs.flatMap((text, index) => text.trim() === "" ? [] : [{ text, index }]);
+    // Avoid an unbounded native option list on pathological pages. Native selection
+    // and region marking remain available; never silently omit selectable runs.
+    const available = selectable.length > 0 && selectable.length <= 2000;
+    start.disabled = end.disabled = !available;
+    required(this.root.querySelector("[data-passage-comment]"), HTMLButtonElement).disabled = !available;
+    if (!available) {
+      this.control("[data-selection-status]").textContent = selectable.length > 2000 ? "Too many text runs for the picker. Select text on the page or mark a region." : "No selectable text is ready on this page. Try again after loading, or mark a region.";
+      return;
+    }
+    for (const { text, index } of selectable) {
+      const option = document.createElement("option"); option.value = String(index); option.textContent = `${String(index + 1)}: ${text}`;
+      start.append(option); end.append(option.cloneNode(true));
+    }
+    this.previewPassage();
+  }
+
+  private passageRuns(): { spans: HTMLElement[]; quote: string } {
+    const start = Number(required(this.root.querySelector("[data-text-start]"), HTMLSelectElement).value);
+    const end = Number(required(this.root.querySelector("[data-text-end]"), HTMLSelectElement).value);
+    const layer = this.textLayer;
+    if (layer === undefined || start > end || layer.textDivs[start] === undefined || layer.textDivs[end] === undefined) throw new Error("Choose a passage end at or after its start.");
+    return { spans: layer.textDivs.slice(start, end + 1), quote: layer.textContentItemsStr.slice(start, end + 1).join("\n") };
+  }
+
+  private previewPassage(): void {
+    try {
+      const { quote } = this.passageRuns();
+      this.control("[data-text-preview]").textContent = quote.length <= 16_000 ? quote : "Passage exceeds 16,000 characters. Choose a shorter passage.";
+      this.control("[data-selection-status]").textContent = "";
+    } catch (error) {
+      this.control("[data-text-preview]").textContent = "";
+      this.control("[data-selection-status]").textContent = formatError(error);
+    }
+  }
+
+  private commentOnText(fromPicker: boolean): void {
+    try {
+      if (this.document === undefined || this.statusElement.dataset["state"] !== "ready" || this.control("[data-text-tools]").hidden === true) return;
+      const page = this.canvas.getBoundingClientRect();
+      let anchor: TextSelectionAnchor;
+      if (fromPicker) {
+        const { spans, quote } = this.passageRuns();
+        anchor = textSelectionAnchor(quote, spans.map(span => span.getBoundingClientRect()), page);
+      } else {
+        const range = selectedTextRange(this.root, this.textContainer);
+        if (range === undefined) throw new Error("Select text on this PDF page first, or use the keyboard/touch passage picker.");
+        anchor = textSelectionAnchor(range.toString(), Array.from(range.getClientRects()), page);
+      }
+      const detail: ResearchPdfSelectionDetail = { page: this.pageNumber, ...anchor };
+      this.toggleTextTools(false);
+      window.getSelection()?.removeAllRanges();
+      this.setReadingFocus(false);
+      this.dispatchEvent(new CustomEvent<ResearchPdfSelectionDetail>(researchPdfSelectionEventName, { detail, bubbles: true, composed: true }));
+    } catch (error) { this.control("[data-selection-status]").textContent = formatError(error); }
   }
 
   private startSelection(event: PointerEvent): void {
