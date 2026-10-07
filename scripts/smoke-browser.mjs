@@ -11,6 +11,7 @@ import { nativeSmokeHost } from "./smoke-native-host.mjs";
 import { smokeNative } from "./smoke-native.mjs";
 import { syntheticPdf, syntheticReaderPdf } from "./synthetic-pdf.mjs";
 import { smokeReader } from "./smoke-reader.mjs";
+import { smokeReaderAnnotations } from "./smoke-reader-annotations.mjs";
 
 await mkdir(".smoke", { recursive: true });
 await build({ entryPoints: ["src/server/fixture.testSupport.ts"], outfile: ".smoke/fixture.js", bundle: true, platform: "node", format: "esm" });
@@ -65,6 +66,7 @@ try {
   await page.close();
   const checks = await smokeNative({ browser, url, fixture: f, host, errors });
   checks.push(...await smokeReader({ browser, url, errors }));
+  checks.push(...await smokeReaderAnnotations({ browser, url, errors }));
   assert(operations.some(op => op.operation === "library.pdf.open"));
   assert(operations.some(op => op.operation === "library.text.index"));
   assert(operations.filter(op => op.operation === "discovery.search").every(op => op.input.payload.provider === "local"));

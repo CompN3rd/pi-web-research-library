@@ -30,6 +30,8 @@ export function pdfViewerTemplate(): string {
       .findbar input { flex:1; min-width:120px; width:160px; } [data-find-status] { flex-basis:100%; font-size:12px; opacity:.8; }
       .viewport { overflow:auto; overscroll-behavior:contain; height:clamp(320px, 72dvh, 1100px); background:#e5e7eb; scrollbar-gutter:stable; outline-offset:-3px; }
       .reader:modal .viewport { height:auto; flex:1; min-height:0; }
+      @media(max-width:800px) { :host([annotation-open]) .reader:not(:modal) .viewport { height:38dvh; min-height:180px; } }
+      @media(pointer:coarse) { button, summary, select, a { min-height:44px; } }
       .stage { min-width:100%; width:max-content; min-height:100%; display:flex; justify-content:center; align-items:flex-start; padding:20px; }
       .page { position:relative; flex:none; line-height:0; box-shadow:0 2px 5px #0002,0 12px 36px #0001; background:white; }
       canvas { display:block; max-width:none; background:white; }
@@ -71,12 +73,12 @@ export function pdfViewerTemplate(): string {
           <button class="icon" type="button" data-next aria-label="Next PDF page" title="Next page (→)">›</button>
         </div>
         <select data-fit aria-label="PDF zoom" title="Page sizing"><option value="width">Fit width</option><option value="page">Fit page</option><option value="1">100%</option><option value="1.5">150%</option><option value="2">200%</option><option value="3">300%</option><option value="custom" hidden>Custom</option></select>
+        <button type="button" data-mark aria-pressed="false" aria-describedby="mark-instructions">Mark region</button>
         <button type="button" data-find-toggle aria-expanded="false" aria-controls="pdf-find" title="Find in PDF (Ctrl/⌘ F)">Find</button>
         <button type="button" data-focus aria-pressed="false" aria-label="Reading focus" title="Distraction-free reading (F)">⛶ <span class="focus-label">Focus</span></button>
         <details class="more" data-more><summary aria-label="More reader options" title="More reader options">•••</summary><div class="menu">
           <div class="zoom"><span data-zoom-label>100%</span><div><button type="button" data-zoom-out aria-label="Zoom PDF out">−</button><button type="button" data-zoom-in aria-label="Zoom PDF in">+</button></div></div>
           <label>Page tone<select data-page-tone aria-label="Page tone"><option value="paper">Paper</option><option value="warm">Warm</option><option value="night">Night</option></select></label>
-          <button type="button" data-mark aria-pressed="false">Mark region</button>
           <label><input type="checkbox" data-markers checked> Show evidence markers</label>
           <hr><button type="button" data-reload>Reload PDF</button>
           <a data-open-pdf target="_blank" rel="noopener noreferrer" hidden aria-disabled="true" tabindex="-1">Open PDF</a>
@@ -90,7 +92,7 @@ export function pdfViewerTemplate(): string {
         <button type="button" data-find-close aria-label="Close PDF search">×</button>
         <span data-find-status role="status" aria-live="polite">Search this PDF without creating an index.</span>
       </form>
-      <div class="mark-hint" data-mark-hint hidden>Drag over a passage to save evidence. Esc cancels.<button type="button" data-mark-cancel>Cancel</button></div>
+      <div class="mark-hint" id="mark-instructions" data-mark-hint hidden>Drag with mouse or touch. Or use arrows to move the region, Shift+arrows to resize, Enter to annotate. Esc cancels.<button type="button" data-mark-cancel>Cancel</button></div>
       <div data-text-status role="status"></div>
       <div class="viewport" tabindex="0" role="region" aria-label="PDF page. Select text to copy; use arrow keys to change pages.">
         <div class="stage"><div class="page">

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { disposeSmokeReader } from "./smoke-reader-annotations.mjs";
 
 // Drives compiled UI controls; peer calls below inspect public state, not private
 // component fields. Only session execution/events are synthetic.
@@ -51,18 +52,27 @@ export async function smokeNative({ browser, url, fixture, host, errors }) {
     await panel.getByText("Verified full-text search", { exact: true }).click();
     const canvas = reader.locator("canvas"); await canvas.scrollIntoViewIfNeeded();
     assert(await canvas.evaluate(element => { const data = element.getContext("2d").getImageData(0, 0, element.width, element.height).data; return data.some((v, i) => i % 4 !== 3 && v < 100); }));
-    await reader.getByLabel("More reader options", { exact: true }).click();
     await reader.getByRole("button", { name: "Mark region", exact: true }).click();
     await canvas.scrollIntoViewIfNeeded(); const box = await canvas.boundingBox(); assert(box);
     await page.mouse.move(box.x + 20, box.y + 20); await page.mouse.down(); await page.mouse.move(box.x + 300, box.y + 140, { steps: 10 }); await page.mouse.up();
     await field("Evidence note / question").fill("Synthetic native evidence; inspect the quoted page.");
     assert((await field("Captured quote").inputValue()).includes("Synthetic research paper"));
     await click("Save evidence");
+    assert(await reader.isVisible(), "Saving a region must keep the PDF visible");
+    assert(await panel.getByRole("complementary", { name: "Passage annotation", exact: true }).isVisible());
+    await page.screenshot({ path: ".smoke/reader-annotation-desktop.png", fullPage: true });
+    await click("Close annotation");
     const evidence = (await peer("evidence.list", { referenceId: reference.id })).items[0];
     assert.equal(evidence.documentId, reference.documents[0].id); assert.equal(evidence.pdfSha256, reference.documents[0].sha256);
+    await disposeSmokeReader(page, reader);
     await page.reload(); await idle(); await click("Native synthetic paper"); await click("Evidence");
     await panel.getByText("Synthetic native evidence; inspect the quoted page.", { exact: true }).waitFor();
     await click("Read quote on page 1"); await reader.locator('[data-status][data-state="ready"]').waitFor();
+    const marker = reader.locator(`[data-annotation-id="${evidence.id}"]`);
+    await marker.focus(); await page.keyboard.press("Enter");
+    assert.equal(await field("Evidence note / question").inputValue(), evidence.body);
+    assert(await reader.isVisible(), "Keyboard marker activation stays in Reader");
+    await click("Close annotation");
     await reader.getByLabel("More reader options", { exact: true }).click();
     await reader.getByRole("button", { name: "Reload PDF", exact: true }).click();
     await reader.locator('[data-status][data-state="ready"]').waitFor();
@@ -115,6 +125,7 @@ export async function smokeNative({ browser, url, fixture, host, errors }) {
     assert.deepEqual(await readFile(fixture.pdfPath), fixture.pdf);
     await page.screenshot({ path: ".smoke/native-library.png", fullPage: true });
     console.log("Native browser: citation audit/export, separate file consent and preserved backup passed.");
+    await disposeSmokeReader(page, reader);
     await page.goto(url + "?panel=discovery");
     const discovery = page.locator("pi-web-library-discovery");
     await discovery.getByLabel("Literature query", { exact: true }).fill("Native synthetic");

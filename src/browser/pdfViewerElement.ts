@@ -134,6 +134,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
   private markers: ResearchPdfAnnotationMarker[] = [];
   private activeMarkerId: string | undefined;
   private marking = false;
+  private keyboardRegion: PdfRect = { x: .1, y: .1, width: .4, height: .1 };
   private dragPointerId: number | undefined;
   private dragOrigin: { x: number; y: number } | undefined;
   private source: string | undefined;
@@ -246,6 +247,9 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
     this.runInteraction(() => this.goToPage(page));
   }
 
+  /** Return keyboard focus from a contextual editor to the document. */
+  focusPage(): void { this.viewportElement.focus({ preventScroll: true }); }
+
   /** Arm or disarm region marking; disarming always releases a pointer capture. */
   setMarking(marking: boolean): void {
     const armed = marking && this.document !== undefined && this.statusElement.dataset["state"] === "ready";
@@ -255,6 +259,10 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
     }
     this.marking = armed;
     if (!armed) this.cancelSelection();
+    else {
+      this.keyboardRegion = { x: .1, y: .1, width: .4, height: .1 };
+      this.marquee.hidden = false; applyRectStyle(this.marquee, this.keyboardRegion);
+    }
     this.updateControls();
   }
 
@@ -615,6 +623,24 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target;
     if (target instanceof HTMLElement && (target.closest("input, select, textarea, button, summary, a") !== null || target.isContentEditable)) return;
+    if (this.marking && (key.startsWith("arrow") || key === "enter")) {
+      event.preventDefault();
+      if (this.dragPointerId !== undefined) return;
+      if (key === "enter") this.runInteraction(() => this.commitRegion(this.keyboardRegion));
+      else {
+        const rect = this.keyboardRegion;
+        const dx = key === "arrowright" ? .01 : key === "arrowleft" ? -.01 : 0;
+        const dy = key === "arrowdown" ? .01 : key === "arrowup" ? -.01 : 0;
+        this.keyboardRegion = event.shiftKey
+          ? { ...rect, width: Math.max(.01, Math.min(1 - rect.x, rect.width + dx)), height: Math.max(.01, Math.min(1 - rect.y, rect.height + dy)) }
+          : { ...rect, x: Math.max(0, Math.min(1 - rect.width, rect.x + dx)), y: Math.max(0, Math.min(1 - rect.height, rect.y + dy)) };
+        this.marquee.hidden = false; applyRectStyle(this.marquee, this.keyboardRegion);
+        this.marquee.scrollIntoView({ block: "nearest", inline: "nearest" });
+        const r = this.keyboardRegion;
+        this.setStatus(`Region: ${String(Math.round(r.x * 100))}%, ${String(Math.round(r.y * 100))}%; size ${String(Math.round(r.width * 100))}% × ${String(Math.round(r.height * 100))}%. Enter to annotate.`, "ready");
+      }
+      return;
+    }
     let action: (() => void) | undefined;
     if (key === "arrowright") action = () => { this.showPage(this.pageNumber + 1); };
     if (key === "arrowleft") action = () => { this.showPage(this.pageNumber - 1); };
@@ -781,6 +807,10 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
       this.setStatus("That region was too small to mark. Drag across the passage you want.", "ready");
       return;
     }
+    await this.commitRegion(rect);
+  }
+
+  private async commitRegion(rect: PdfRect): Promise<void> {
     this.setMarking(false);
     const generation = this.generation;
     const renderGeneration = this.renderGeneration;

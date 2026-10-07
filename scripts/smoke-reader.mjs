@@ -85,7 +85,6 @@ export async function smokeReader({ browser, url, errors }) {
     assert.equal(await reader.getByLabel("PDF page number", { exact: true }).inputValue(), before);
     await page.screenshot({ path: ".smoke/reader-mobile.png" });
     await reader.evaluate(element => { element.addEventListener("research-pdf-region-selected", event => { element.dataset.selection = JSON.stringify(event.detail); }, { once: true }); });
-    await reader.getByLabel("More reader options", { exact: true }).click();
     await reader.getByRole("button", { name: "Mark region", exact: true }).click();
     const canvasBox = await reader.locator("canvas").boundingBox(); assert(canvasBox);
     await page.mouse.move(canvasBox.x + canvasBox.width * .05, canvasBox.y + canvasBox.height * .04);

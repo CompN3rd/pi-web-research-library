@@ -157,10 +157,15 @@ describe("evidence and lifecycle safety", () => {
   });
   it("turns a real reader region event into anchored evidence and retains identity on retry", async () => {
     const host = workbenchHost(); const element = await mount(host); await click(element, "Synthetic paper"); await click(element, "Reader"); await click(element, "Synthetic PDF");
+    const reader = viewer(element);
     const markerSpy = vi.spyOn(ResearchLibraryPdfViewerElement.prototype, "annotations", "set");
     const selection = { page: 3, rect: { x: .1, y: .2, width: .3, height: .1 }, quote: "Synthetic passage" };
     viewer(element).dispatchEvent(new CustomEvent(researchPdfSelectionEventName, { detail: selection, bubbles: true, composed: true })); await element.updateComplete;
     expect(control(element, "Captured quote").value).toBe("Synthetic passage");
+    expect(root(element).querySelector<HTMLElement>('section[aria-label="PDF reader"]')?.hidden).toBe(false);
+    expect(root(element).querySelector<HTMLElement>('section[aria-label="Evidence notebook"]')?.hidden).toBe(true);
+    expect(root(element).activeElement).toBe(control(element, "Evidence note / question"));
+    expect(reader.hasAttribute("annotation-open")).toBe(true);
     await input(element, "Evidence note / question", "Check this claim");
     host.overrides.set("evidence.save", () => { throw new Error("Connection lost; retry safely"); });
     await click(element, "Save evidence"); expect(control(element, "Evidence note / question").value).toBe("Check this claim");
@@ -170,8 +175,34 @@ describe("evidence and lifecycle safety", () => {
     expect(retry?.["id"]).toMatch(/^ev-[a-f0-9]{32}$/u);
     expect(retry).toMatchObject({ expectedRevision: 0, referenceId: refId, documentId: docId, pdfSha256: sha, ...selection, body: "Check this claim" });
     expect(markerSpy).toHaveBeenLastCalledWith([expect.objectContaining({ page: 3, label: "Check this claim", rect: selection.rect })]);
+    await click(element, "Close annotation");
+    expect(root(element).querySelector<HTMLElement>(".reader-annotation")?.hidden).toBe(true);
+    expect(reader.shadowRoot?.activeElement?.className).toBe("viewport");
     viewer(element).dispatchEvent(new CustomEvent(researchPdfAnnotationEventName, { detail: { id: retry?.["id"] } })); await element.updateComplete;
     expect(control(element, "Evidence note / question").value).toBe("Check this claim");
+    expect(viewer(element)).toBe(reader);
+    expect(root(element).querySelector<HTMLElement>('section[aria-label="PDF reader"]')?.hidden).toBe(false);
+    await input(element, "Evidence note / question", "Do not lose this edit");
+    reader.dispatchEvent(new CustomEvent(researchPdfSelectionEventName, { detail: selection })); await element.updateComplete;
+    expect(root(element).querySelector("[role=alert]")?.textContent).toContain("Save or discard");
+    expect(control(element, "Evidence note / question").value).toBe("Do not lose this edit");
+    await click(element, "Evidence");
+    expect(control(element, "Evidence note / question").value).toBe("Do not lose this edit");
+    await click(element, "Reader"); await click(element, "Discard evidence edits");
+    expect(reader.hasAttribute("annotation-open")).toBe(false);
+  });
+  it("opens saved annotations from an in-reader chooser and protects a pending edit", async () => {
+    const host = workbenchHost(); const saved = syntheticEvidence(); host.notes.push(saved);
+    const element = await mount(host); await click(element, "Synthetic paper"); await click(element, "Reader");
+    const reader = viewer(element);
+    await click(element, `Page 3: ${saved.body}`);
+    expect(root(element).querySelector<HTMLElement>('section[aria-label="PDF reader"]')?.hidden).toBe(false);
+    expect(control(element, "Evidence note / question").value).toBe(saved.body);
+    expect(viewer(element)).toBe(reader);
+    await input(element, "Evidence note / question", "Pending chooser edit");
+    await click(element, `Page 3: ${saved.body}`);
+    expect(root(element).querySelector("[role=alert]")?.textContent).toContain("Save or discard");
+    expect(control(element, "Evidence note / question").value).toBe("Pending chooser edit");
   });
   it("defers quote backlinks until the matching source is ready", async () => {
     const host = workbenchHost(); host.notes.push(syntheticEvidence()); const element = await mount(host); await click(element, "Synthetic paper"); await click(element, "Evidence");

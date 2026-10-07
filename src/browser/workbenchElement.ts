@@ -39,6 +39,7 @@ export class LibraryWorkbenchElement extends LitElement {
   private notice = "";
   private tab: Tab = "Reference";
   private readerLibraryVisible = false;
+  private focusEvidenceEditor = false;
   private drafts = emptyDrafts();
   private readonly parkedDrafts = new Map<string, WorkspaceDrafts>();
   private references = emptyPage<LibraryReference>();
@@ -192,6 +193,11 @@ export class LibraryWorkbenchElement extends LitElement {
     return html`<label>${label}<select aria-label=${label} data-selection=${current} @change=${(event: Event) => { this.change(() => { update(value(event)); }); }}>${values.map(item => html`<option value=${item}>${item === "" ? "All" : item}</option>`)}</select></label>`;
   }
   protected override updated(): void {
+    this.viewer?.toggleAttribute("annotation-open", this.tab === "Reader" && this.readerEvidenceOpen());
+    if (this.focusEvidenceEditor) {
+      this.focusEvidenceEditor = false;
+      this.renderRoot.querySelector<HTMLTextAreaElement>(".reader-annotation textarea:not([readonly])")?.focus({ preventScroll: true });
+    }
     // Lit commits a select's properties before its dynamic options. Synchronize only after insertion.
     for (const select of this.renderRoot.querySelectorAll<HTMLSelectElement>("select[data-selection]")) {
       const selected = select.getAttribute("data-selection");
@@ -213,7 +219,10 @@ export class LibraryWorkbenchElement extends LitElement {
           <div class="reader-title"><h2>${this.active?.title ?? "Your reading space"}</h2><span class="muted">${this.activeDocument === null ? "Choose a reference and open its PDF." : this.activeDocument.label || this.activeDocument.path}</span></div>
           ${(this.active?.documents.length ?? 0) > 1 ? html`<select aria-label="Reading document" data-selection=${this.activeDocument?.id ?? ""} ?disabled=${this.busy} @change=${(event: Event) => { const doc = this.active?.documents.find(doc => doc.id === value(event)); if (doc !== undefined) this.run(() => this.openDocument(doc)); }}><option value="" disabled>Choose PDF</option>${this.active?.documents.map(doc => html`<option value=${doc.id}>${doc.label || doc.path}</option>`)}</select>` : nothing}
         </div>
-        <div id="reader"></div>${this.renderReader()}</section>
+        ${reading ? this.renderReaderAnnotations() : nothing}
+        <div class="reader-session ${this.readerEvidenceOpen() ? "annotating" : ""}"><div id="reader"></div>
+          <aside class="reader-annotation" aria-label="Passage annotation" ?hidden=${!this.readerEvidenceOpen()}>${this.tab === "Reader" && this.readerEvidenceOpen() ? this.renderEvidenceEditor(true) : nothing}</aside>
+        </div>${this.renderReader()}</section>
       <section ?hidden=${this.tab !== "Evidence"} aria-label="Evidence notebook">${this.renderEvidence()}</section>
       <section ?hidden=${this.tab !== "Research"} aria-label="Research tasks">${this.renderResearch()}</section>
       <section ?hidden=${this.tab !== "Writing"} aria-label="Manuscript writing">${this.renderWriting()}</section>
@@ -312,7 +321,7 @@ export class LibraryWorkbenchElement extends LitElement {
       ${this.button("Rebuild current text index", () => { this.indexDocument(true); }, this.activeDocument === null)}
       <p class="muted">Every attached PDF in the search scope needs an index. Rebuild explicitly replaces only the derivative index after re-verifying the unchanged PDF; ordinary reads never silently repair corruption.</p>
       ${this.hits.map(hit => html`<article class="card"><p>${hit.excerpt}</p>${this.button(`Open page ${String(hit.page)}`, () => { this.run(async client => { if (this.active?.id !== hit.referenceId) await this.openReference(client, hit.referenceId); const doc = this.active?.documents.find(item => item.id === hit.documentId && item.sha256 === hit.pdfSha256); if (doc === undefined) throw new Error("Search hit no longer matches the document identity. Search again."); await this.openDocument(doc, hit.page); }); })}</article>`)}</details>
-      ${this.activeDocument === null ? nothing : html`<p class="muted">Use More reader options → Mark region to create anchored evidence. Markers reflect loaded notebook records; clear evidence filters or load more to see additional markers. Reader Find searches this PDF directly; verified corpus search above uses server indexes.</p>`}</details>`;
+      ${this.activeDocument === null ? nothing : html`<p class="muted">Use Mark region to create anchored evidence without leaving Reader. Markers reflect loaded notebook records; clear evidence filters or load more to see additional markers. Reader Find searches this PDF directly; verified corpus search above uses server indexes.</p>`}</details>`;
   }
   private indexDocument(rebuild: boolean): void {
     this.run(async client => {
@@ -368,7 +377,7 @@ export class LibraryWorkbenchElement extends LitElement {
           this.markEvidence({ page: number(r["page"]), quote: text(r["quote"]), rect: { x: number(rect["x"]), y: number(rect["y"]), width: number(rect["width"]), height: number(rect["height"]) } });
         } catch (error) { this.error = error instanceof Error ? error.message : "Invalid reader selection"; this.requestUpdate(); }
       });
-      this.viewer.addEventListener(researchPdfAnnotationEventName, (event: Event) => { if (event instanceof CustomEvent) { const detail: unknown = event.detail; const id = typeof detail === "string" ? detail : object(detail)["id"]; const item = this.evidencePage.items.find(item => item.id === id); if (item !== undefined) this.editEvidence(item); } });
+      this.viewer.addEventListener(researchPdfAnnotationEventName, (event: Event) => { if (event instanceof CustomEvent) { const detail: unknown = event.detail; const id = typeof detail === "string" ? detail : object(detail)["id"]; const item = this.evidencePage.items.find(item => item.id === id); if (item !== undefined) this.editEvidence(item, "Reader"); } });
       this.renderRoot.querySelector("#reader")?.append(this.viewer);
     }
     const source: PdfPeerSource = { peer: context.peer, referenceId: ref.id, documentId: doc.id, expectedSha256: doc.sha256 };
@@ -391,25 +400,66 @@ export class LibraryWorkbenchElement extends LitElement {
     const doc = selection === undefined ? null : this.activeDocument;
     if (selection !== undefined && doc === null) return;
     this.drafts.evidence = { id: workbenchId("ev"), expectedRevision: 0, referenceId: this.active.id, documentId: doc?.id ?? null, pdfSha256: doc?.sha256 ?? null, page: selection?.page ?? null, rect: selection?.rect ?? null, quote: selection?.quote ?? "", body: "", kind: selection === undefined ? "note" : "quote", status: "open", tags: [] };
-    this.drafts.evidenceDirty = true; this.tab = "Evidence"; this.requestUpdate();
+    this.drafts.evidenceDirty = true; this.tab = selection === undefined ? "Evidence" : "Reader"; this.focusEvidenceEditor = selection !== undefined; this.requestUpdate();
   }
-  private editEvidence(item: LibraryEvidence): void {
+  private renderReaderAnnotations(): TemplateResult {
+    const doc = this.activeDocument;
+    const items = this.evidencePage.items.filter(item => item.referenceId === this.active?.id && item.documentId === doc?.id && item.pdfSha256 === doc.sha256 && item.page !== null && item.deletedAt === null);
+    return html`<details class="reader-annotations"><summary>Saved annotations (${items.length} loaded)</summary>
+      <p class="muted">Choose a passage even when its markers overlap. This list uses the notebook's current filters and loaded records.</p>
+      <div class="annotation-list">${items.map(item => this.button(`Page ${String(item.page)}: ${item.body || item.quote}`, () => { this.run(async () => {
+        if (doc === null || item.page === null) return;
+        await this.openDocument(doc, item.page);
+        this.editEvidence(item, "Reader");
+        const details = this.renderRoot.querySelector<HTMLDetailsElement>(".reader-annotations");
+        if (details !== null) details.open = false;
+      }); }))}</div>
+      <div class="actions">${this.button("Refresh annotations", () => { this.run(client => this.loadEvidence(client)); })}${this.button("Load more annotations", () => { this.run(client => this.loadEvidence(client, this.evidencePage.nextOffset ?? 0)); }, this.evidencePage.nextOffset === null)}</div>
+    </details>`;
+  }
+  private readerEvidenceOpen(): boolean {
+    const d = this.drafts.evidence;
+    return d !== null && this.active?.id === d.referenceId && this.activeDocument?.id === d.documentId && this.activeDocument.sha256 === d.pdfSha256;
+  }
+  private editEvidence(item: LibraryEvidence, destination: Tab = "Evidence"): void {
     if (this.drafts.evidenceDirty) { this.error = "Save or discard pending evidence first."; this.requestUpdate(); return; }
-    this.drafts.evidence = { id: item.id, expectedRevision: item.revision, referenceId: item.referenceId, documentId: item.documentId, pdfSha256: item.pdfSha256, page: item.page, rect: item.rect, quote: item.quote, body: item.body, kind: item.kind, status: item.status, tags: [...item.tags] }; this.tab = "Evidence"; this.requestUpdate();
+    this.drafts.evidence = { id: item.id, expectedRevision: item.revision, referenceId: item.referenceId, documentId: item.documentId, pdfSha256: item.pdfSha256, page: item.page, rect: item.rect, quote: item.quote, body: item.body, kind: item.kind, status: item.status, tags: [...item.tags] }; this.tab = destination;
+    this.focusEvidenceEditor = destination === "Reader";
+    if (this.viewer !== null) this.viewer.activeAnnotationId = item.id;
+    this.requestUpdate();
   }
   private renderEvidence(): TemplateResult {
-    const d = this.drafts.evidence;
     return html`<h2>Evidence notebook</h2><p>${this.active?.title ?? "All references"}</p><div class="actions">${this.button("New unanchored note", () => { this.markEvidence(); }, this.active?.deletedAt !== null)}${this.button("Refresh evidence", () => { this.run(client => this.loadEvidence(client)); })}</div>
       <details><summary>Filter evidence</summary><fieldset ?disabled=${this.busy}>${this.field("Search evidence", this.evidenceQuery, v => { this.evidenceQuery = v; }, { max: 200 })}${this.select("Evidence kind", this.evidenceKind, ["", "quote", "note", "question"], v => { this.evidenceKind = v; })}${this.select("Evidence status", this.evidenceStatus, ["", "open", "resolved"], v => { this.evidenceStatus = v; })}<label class="check"><input type="checkbox" .checked=${this.evidenceTrash} @change=${(e: Event) => { this.change(() => { this.evidenceTrash = checked(e); }); }}>Deleted evidence (recovery retained)</label></fieldset></details>
-      ${d === null ? nothing : html`<form @submit=${(e: SubmitEvent) => { e.preventDefault(); this.run(async client => { const result = await client.request("evidence.save", d, evidence); this.drafts.evidenceDirty = false; this.editEvidence(result); this.notice = "Evidence saved. Anchors retain the original PDF identity."; await this.loadEvidence(client); }); }}><fieldset ?disabled=${this.busy}><div class="card"><h3>${d.expectedRevision === 0 ? "New evidence" : "Edit evidence"}</h3><p class="muted">${d.page === null ? "Unanchored note — no PDF provenance claimed" : `Anchored to page ${String(d.page)} · ${d.pdfSha256 ?? ""}`}</p>
-      <label>Captured quote<textarea .value=${d.quote} readonly></textarea></label><p class="muted">Original quote and anchor are immutable. Add corrections in your note.</p>
-      ${this.field("Evidence note / question", d.body, v => { d.body = v; this.drafts.evidenceDirty = true; }, { area: true, required: true, max: 16_000 })}
-      <div class="grid">${this.select("Kind", d.kind, ["quote", "note", "question"], v => { d.kind = choice(v, ["quote", "note", "question"]); this.drafts.evidenceDirty = true; })}${this.select("Status", d.status, ["open", "resolved"], v => { d.status = choice(v, ["open", "resolved"]); this.drafts.evidenceDirty = true; })}${this.field("Evidence tags", d.tags.join(", "), v => { d.tags = split(v); this.drafts.evidenceDirty = true; })}</div>
-      <div class="actions"><button class="primary" type="submit">Save evidence</button><span>${this.drafts.evidenceDirty ? "Unsaved evidence" : "Saved"}</span></div></div></fieldset></form><div class="actions">${this.button("Discard evidence edits", () => { this.change(() => { this.drafts.evidence = null; this.drafts.evidenceDirty = false; }); })}</div>`}
+      ${this.tab === "Evidence" ? this.renderEvidenceEditor(false) : nothing}
       <p>${this.evidencePage.total} evidence records</p>${this.evidencePage.items.map(item => html`<article class="card"><h3>${item.kind} <span class="badge">${item.deletedAt === null ? item.status : "Deleted"}</span></h3><blockquote>${item.quote}</blockquote><p class="prose">${item.body}</p><p class="muted">${item.tags.join(", ")} · revision ${item.revision}</p><div class="actions">
       ${this.button(item.page === null ? "Unanchored" : `Read quote on page ${String(item.page)}`, () => { this.run(async client => { if (this.active?.id !== item.referenceId) await this.openReference(client, item.referenceId); const doc = this.active?.documents.find(doc => doc.id === item.documentId && doc.sha256 === item.pdfSha256); if (doc === undefined || item.page === null) throw new Error("The evidence document is missing or its identity changed."); await this.openDocument(doc, item.page); if (this.viewer !== null) this.viewer.activeAnnotationId = item.id; }); }, item.page === null)}
       ${this.button("Edit evidence", () => { this.editEvidence(item); }, item.deletedAt !== null)}${this.button("Delete evidence", () => { this.run(async client => { if (this.drafts.evidenceDirty) throw new Error("Save or discard pending evidence first."); await client.request("evidence.delete", { id: item.id, expectedRevision: item.revision }, evidence); if (this.drafts.evidence?.id === item.id) this.drafts.evidence = null; this.notice = "Evidence deleted; .deleted recovery data is retained, not securely erased."; await this.loadEvidence(client); }); }, item.deletedAt !== null)}</div></article>`)}
       ${this.button("Load more evidence", () => { this.run(client => this.loadEvidence(client, this.evidencePage.nextOffset ?? 0)); }, this.evidencePage.nextOffset === null)}`;
+  }
+  private renderEvidenceEditor(inReader: boolean): TemplateResult | typeof nothing {
+    const d = this.drafts.evidence;
+    if (d === null) return nothing;
+    return html`<form @submit=${(e: SubmitEvent) => { e.preventDefault(); this.run(async client => {
+      const result = await client.request("evidence.save", d, evidence);
+      this.drafts.evidenceDirty = false;
+      this.editEvidence(result, inReader ? "Reader" : "Evidence");
+      this.notice = "Evidence saved. Anchors retain the original PDF identity.";
+      await this.loadEvidence(client);
+    }); }}><fieldset ?disabled=${this.busy}>
+      <h3>${d.expectedRevision === 0 ? "New evidence" : "Edit evidence"}</h3>
+      <p class="muted">${d.page === null ? "Unanchored note — no PDF provenance claimed" : `Anchored to page ${String(d.page)}`}</p>
+      ${this.field("Evidence note / question", d.body, v => { d.body = v; this.drafts.evidenceDirty = true; }, { area: true, required: true, max: 16_000 })}
+      <div class="actions"><button class="primary" type="submit">Save evidence</button><span role="status">${this.drafts.evidenceDirty ? "Unsaved evidence" : "Saved"}</span></div>
+      <details ?open=${!inReader}><summary>Quote, source & annotation details</summary>
+        <label>Captured quote<textarea .value=${d.quote} readonly></textarea></label>
+        <p class="muted">Original quote and anchor are immutable. Add corrections in your note.</p><code>${d.pdfSha256 ?? "No PDF identity"}</code>
+        <div class="grid">${this.select("Kind", d.kind, ["quote", "note", "question"], v => { d.kind = choice(v, ["quote", "note", "question"]); this.drafts.evidenceDirty = true; })}${this.select("Status", d.status, ["open", "resolved"], v => { d.status = choice(v, ["open", "resolved"]); this.drafts.evidenceDirty = true; })}${this.field("Evidence tags", d.tags.join(", "), v => { d.tags = split(v); this.drafts.evidenceDirty = true; })}</div>
+      </details>
+    </fieldset></form><div class="actions">${this.button(inReader && !this.drafts.evidenceDirty ? "Close annotation" : "Discard evidence edits", () => {
+      this.change(() => { this.drafts.evidence = null; this.drafts.evidenceDirty = false; });
+      if (inReader) this.viewer?.focusPage();
+    })}</div>`;
   }
   private invalidateTask(): void { this.taskPreview = null; this.modelConsent = false; }
   private stopPolling(): void { if (this.pollTimer !== undefined) clearTimeout(this.pollTimer); this.pollTimer = undefined; this.pollRemaining = 0; }

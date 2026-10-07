@@ -359,6 +359,33 @@ function addTextLayer(module: PdfJsModule): void {
 }
 
 describe("region marking", () => {
+  it("offers primary keyboard marking with move, resize, commit and cancel", async () => {
+    const harness = fakePdfJs(2);
+    const element = createViewer(); element.pdfJsLoader = harness.loader;
+    document.body.append(element); element.sourceUrl = "paper.pdf";
+    await statusIncludes(element, "Page 1 of 2");
+    const selections: ResearchPdfSelectionDetail[] = [];
+    element.addEventListener(researchPdfSelectionEventName, event => { selections.push(selectionDetail(event)); });
+    const mark = shadowButton(element, "[data-mark]");
+    expect(mark.closest("[data-more]")).toBeNull();
+    mark.click();
+    const viewport = shadow(element, ".viewport", HTMLElement);
+    expect(shadowRoot(element).activeElement).toBe(viewport);
+    vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => undefined);
+    viewport.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    viewport.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", shiftKey: true, bubbles: true }));
+    expect(element.currentPage).toBe(1);
+    viewport.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await waitFor(() => selections.length === 1);
+    expect(selections[0]?.rect.x).toBeCloseTo(.11);
+    expect(selections[0]?.rect.height).toBeCloseTo(.11);
+    expect(selections[0]?.rect.width).toBe(.4);
+    expect(mark.getAttribute("aria-pressed")).toBe("false");
+    mark.click();
+    viewport.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(mark.getAttribute("aria-pressed")).toBe("false");
+    expect(selections).toHaveLength(1);
+  });
   it("reports a dragged region with the page text it covers", async () => {
     const harness = fakePdfJs(1);
     const element = createViewer();

@@ -42,6 +42,16 @@ export const workbenchStyles = css`
   code { overflow-wrap:anywhere; } blockquote { margin:.7rem 0; border-left:3px solid var(--pi-border, #8888); padding-left:.8rem; white-space:pre-wrap; }
   .editor { min-height:24rem; font-family:ui-monospace,monospace; } .scroll { overflow:auto; } table { width:100%; border-collapse:collapse; } th,td { padding:.5rem; border:1px solid var(--pi-border, #8886); text-align:left; vertical-align:top; }
   details { margin:.6rem 0; } summary { cursor:pointer; } .badge { border-radius:1rem; background:var(--pi-bg-secondary, #8882); padding:.1rem .5rem; }
+  .reader-annotations summary { min-height:44px; padding:.5rem 0; }
+  .annotation-list { display:flex; flex-direction:column; max-height:180px; overflow:auto; gap:.35rem; }
+  .annotation-list button { min-height:44px; text-align:left; overflow-wrap:anywhere; }
+  .reader-session { display:grid; grid-template-columns:minmax(0,1fr); gap:.75rem; align-items:start; }
+  .reader-session.annotating { grid-template-columns:minmax(0,1fr) minmax(260px,320px); }
+  .reader-annotation { max-height:72dvh; overflow:auto; border:1px solid var(--pi-border, #8886); border-radius:.5rem; padding:.75rem; }
+  .reader-annotation .actions { margin-top:.6rem; }
+  .reader-annotation button, .reader-annotation summary { min-height:44px; }
+  .reader-annotation summary { padding:.5rem 0; }
+  @media(max-width:800px) { .reader-session.annotating { grid-template-columns:minmax(0,1fr); } .reader-annotation { max-height:36dvh; } }
   #reader:empty { display:none; } a { color:var(--pi-accent, #0969da); }
   @media(prefers-color-scheme:dark) { :host { color:var(--pi-fg, #e6edf3); background:var(--pi-bg, #161b22); } button,input,select,textarea { background:var(--pi-bg, #161b22); } [role=alert] { color:var(--pi-danger, #ff938a); } }
   @media(max-width:800px) { .layout { grid-template-columns:1fr; } aside { border-right:0; border-bottom:1px solid var(--pi-border, #8886); } aside .cards { max-height:22rem; overflow:auto; } main, .reading main { padding:.5rem; } nav { flex-wrap:nowrap; overflow-x:auto; } nav button { white-space:nowrap; padding:.6rem; } .reader-heading { gap:.5rem; flex-wrap:wrap; } .reader-heading select { max-width:100%; } }
