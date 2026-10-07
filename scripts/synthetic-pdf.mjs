@@ -1,10 +1,13 @@
 // Authored PDF bytes for package/browser verification, never real research data.
-export function syntheticReaderPdf() {
-  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [4 0 R 6 0 R 8 0 R] /Count 3 >>", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"];
-  for (let page = 1; page <= 3; page++) {
+export function syntheticReaderPdf(count = 3, mixedSizes = false) {
+  const kids = Array.from({ length: count }, (_, index) => `${4 + index * 2} 0 R`).join(" ");
+  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", `<< /Type /Pages /Kids [${kids}] /Count ${count} >>`, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"];
+  for (let page = 1; page <= count; page++) {
+    const width = mixedSizes && page === 4 ? 900 : 600;
+    const height = mixedSizes && page === 4 ? 600 : mixedSizes && page === 6 ? 1000 : 800;
     const lines = [`Reading fixture - page ${page}`, "A quiet place to read.", ...Array.from({ length: 18 }, (_, i) => `Passage ${i + 1}: synthetic reading text for selection and navigation.`), page === 2 ? "Unique needle on the second page." : "End of this synthetic page."];
-    const stream = `BT /F1 16 Tf 48 740 Td 30 TL ${lines.map((line, i) => `${i ? "T* " : ""}(${line}) Tj`).join("\n")} ET\n`;
-    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 3 0 R >> >> /Contents ${objects.length + 2} 0 R >>`, `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}endstream`);
+    const stream = `BT /F1 16 Tf 48 ${height - 60} Td 30 TL ${lines.map((line, i) => `${i ? "T* " : ""}(${line}) Tj`).join("\n")} ET\n`;
+    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}] /Resources << /Font << /F1 3 0 R >> >> /Contents ${objects.length + 2} 0 R >>`, `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}endstream`);
   }
   let pdf = "%PDF-1.7\n"; const offsets = [0];
   objects.forEach((object, i) => { offsets.push(Buffer.byteLength(pdf)); pdf += `${i + 1} 0 obj\n${object}\nendobj\n`; });

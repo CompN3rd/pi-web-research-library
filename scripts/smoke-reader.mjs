@@ -15,17 +15,17 @@ export async function smokeReader({ browser, url, errors }) {
     const reader = page.locator("pi-web-research-library-pdf-viewer");
     const ready = () => reader.locator('[data-status][data-state="ready"]').waitFor();
     await ready();
-    await reader.locator(".textLayer span").first().waitFor({ state: "attached" });
+    await reader.locator("[data-active-page=true] .textLayer span").first().waitFor({ state: "attached" });
     const fitWidth = async () => {
       await page.waitForFunction(() => {
         const root = document.querySelector("pi-web-research-library-pdf-viewer").shadowRoot;
-        const view = root.querySelector(".viewport"), canvas = root.querySelector("canvas");
+        const view = root.querySelector(".viewport"), canvas = root.querySelector("[data-active-page=true] canvas");
         return Math.abs(canvas.getBoundingClientRect().width - (view.clientWidth - 40)) < 2 && view.scrollWidth <= view.clientWidth + 1;
       });
     };
     await fitWidth();
     const geometry = await reader.evaluate(element => {
-      const root = element.shadowRoot, canvas = root.querySelector("canvas"), span = root.querySelector(".textLayer span");
+      const root = element.shadowRoot, canvas = root.querySelector("[data-active-page=true] canvas"), span = root.querySelector("[data-active-page=true] .textLayer span");
       const page = canvas.getBoundingClientRect(), text = span.getBoundingClientRect();
       const range = document.createRange(); range.selectNodeContents(span);
       const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
@@ -59,7 +59,7 @@ export async function smokeReader({ browser, url, errors }) {
     await ready();
     await page.waitForFunction(() => {
       const root = document.querySelector("pi-web-research-library-pdf-viewer").shadowRoot;
-      const view = root.querySelector(".viewport"), canvas = root.querySelector("canvas").getBoundingClientRect();
+      const view = root.querySelector(".viewport"), canvas = root.querySelector("[data-active-page=true] canvas").getBoundingClientRect();
       return canvas.height <= view.clientHeight - 39 && canvas.width <= view.clientWidth - 39;
     });
     const viewport = reader.locator(".viewport");
@@ -85,8 +85,17 @@ export async function smokeReader({ browser, url, errors }) {
     assert.equal(await reader.getByLabel("PDF page number", { exact: true }).inputValue(), before);
     await page.screenshot({ path: ".smoke/reader-mobile.png" });
     await reader.evaluate(element => { element.addEventListener("research-pdf-region-selected", event => { element.dataset.selection = JSON.stringify(event.detail); }, { once: true }); });
+    // Continuous scrolling preserves the in-page offset through focus/fit changes.
+    // Explicitly jump to this page top before marking its heading.
+    await reader.getByLabel("PDF page number", { exact: true }).fill("2");
+    await reader.getByLabel("PDF page number", { exact: true }).press("Enter");
+    await reader.getByLabel("PDF page number", { exact: true }).press("Tab");
+    await page.waitForFunction(() => {
+      const root = document.querySelector("pi-web-research-library-pdf-viewer").shadowRoot;
+      return Math.abs(root.querySelector("[data-active-page=true] canvas").getBoundingClientRect().top - root.querySelector(".viewport").getBoundingClientRect().top - 20) < 2;
+    });
     await reader.getByRole("button", { name: "Mark region", exact: true }).click();
-    const canvasBox = await reader.locator("canvas").boundingBox(); assert(canvasBox);
+    const canvasBox = await reader.locator("[data-active-page=true] canvas").boundingBox(); assert(canvasBox);
     await page.mouse.move(canvasBox.x + canvasBox.width * .05, canvasBox.y + canvasBox.height * .04);
     await page.mouse.down();
     await page.mouse.move(canvasBox.x + canvasBox.width * .8, canvasBox.y + canvasBox.height * .14, { steps: 20 });

@@ -1,7 +1,9 @@
 import { normalizedRect, type PdfRect } from "../domain/pdf.js";
 import { pdfViewerTemplate } from "./pdfViewerTemplate.js";
+import { PdfContinuousLayout } from "./pdfContinuousLayout.js";
+import { PdfPageSurface } from "./pdfPageSurface.js";
 import { selectedTextRange, textSelectionAnchor, type TextSelectionAnchor } from "./pdfTextSelection.js";
-import { fittedPdfScale, findPdfText, matchInTextRun, pdfTextStrings, PDF_FIND_MAX_PAGES, PDF_FIND_MAX_HITS, PDF_FIND_MAX_PAGE_CHARACTERS, type PdfFitMode, type PdfFindHit } from "./pdfReading.js";
+import { findPdfText, matchInTextRun, pdfTextStrings, PDF_FIND_MAX_PAGES, PDF_FIND_MAX_HITS, PDF_FIND_MAX_PAGE_CHARACTERS, type PdfFitMode, type PdfFindHit } from "./pdfReading.js";
 import { quoteFromTextItems, textItemsToQuoteItems, type PdfTextContentItem } from "./pdfQuote.js";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { openPdfRange, type PdfPeerSource, type PdfRangeTransport, type RangeModule } from "./pdfRange.js";
@@ -9,9 +11,8 @@ import { openPdfRange, type PdfPeerSource, type PdfRangeTransport, type RangeMod
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 3;
 const ZOOM_STEP = 0.25;
-const MAX_DEVICE_PIXEL_RATIO = 2;
-export const MAX_PDF_RENDER_DIMENSION = 16_384;
-export const MAX_PDF_RENDER_PIXELS = 16_000_000;
+import { MAX_PDF_RENDER_PIXELS } from "./pdfRenderLimits.js";
+export { MAX_PDF_RENDER_DIMENSION, MAX_PDF_RENDER_PIXELS, boundedOutputScale } from "./pdfRenderLimits.js";
 
 export const researchLibraryPdfViewerTagName = "pi-web-research-library-pdf-viewer";
 export const researchPdfSelectionEventName = "research-pdf-region-selected";
@@ -38,28 +39,28 @@ export interface ResearchPdfAnnotationMarker {
   label: string;
 }
 
-interface PdfViewport {
+export interface PdfViewport {
   width: number;
   height: number;
 }
 
-interface PdfRenderTask {
+export interface PdfRenderTask {
   promise: Promise<unknown>;
   cancel(): void;
 }
 
-interface PdfPage {
+export interface PdfPage {
   getViewport(input: { scale: number }): PdfViewport;
   render(input: { canvasContext: unknown; viewport: PdfViewport; transform?: number[] }): PdfRenderTask;
   getTextContent?(): Promise<{ items: PdfTextContentItem[] }>;
   cleanup?(): void;
 }
 
-interface PdfDocument extends Pick<PDFDocumentProxy, "numPages"> {
+export interface PdfDocument extends Pick<PDFDocumentProxy, "numPages"> {
   getPage(pageNumber: number): Promise<PdfPage>;
 }
 
-interface PdfTextLayer {
+export interface PdfTextLayer {
   render(): Promise<unknown>;
   cancel(): void;
   textDivs: HTMLElement[];
@@ -101,7 +102,24 @@ export function defineResearchLibraryPdfViewerElement(): void {
 
 export class ResearchLibraryPdfViewerElement extends HTMLElement {
   private readonly root = this.attachShadow({ mode: "open" });
-  private readonly canvas: HTMLCanvasElement;
+  private readonly emptySurface = new PdfPageSurface(1);
+  private readonly surfaces = new Map<number, PdfPageSurface>();
+  private layout: PdfContinuousLayout | undefined;
+  private readonly stage: HTMLElement;
+  private scrollFrame: number | undefined;
+  private windowGeneration = 0;
+  private layoutChanging = false;
+  private positionGeneration = 0;
+  private pendingPageJump: number | undefined;
+  private pageInputDirty = false;
+  private draining: Promise<void> = Promise.resolve();
+  private get surface(): PdfPageSurface { return this.surfaces.get(this.pageNumber) ?? this.emptySurface; }
+  private get canvas(): HTMLCanvasElement { return this.surface.canvas; }
+  private get overlay(): HTMLElement { return this.surface.overlay; }
+  private get marquee(): HTMLElement { return this.surface.marquee; }
+  private get textContainer(): HTMLElement { return this.surface.textContainer; }
+  private get textLayer(): PdfTextLayer | undefined { return this.surface.textLayer; }
+  private get renderedPage(): PdfPage | undefined { return this.surface.page; }
   private readonly statusElement: HTMLElement;
   private readonly fallback: HTMLAnchorElement;
   private readonly previousButton: HTMLButtonElement;
@@ -111,16 +129,12 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
   private readonly markButton: HTMLButtonElement;
   private readonly pageInput: HTMLInputElement;
   private readonly reloadButton: HTMLButtonElement;
-  private readonly overlay: HTMLElement;
-  private readonly marquee: HTMLElement;
   private readonly viewportElement: HTMLElement;
   private readonly dialog: HTMLDialogElement;
-  private readonly textContainer: HTMLElement;
   private readonly fitSelect: HTMLSelectElement;
   private readonly findInput: HTMLInputElement;
   private readonly findStatus: HTMLElement;
   private pdfjs: PdfJsModule | undefined;
-  private textLayer: PdfTextLayer | undefined;
   private fitMode: PdfFitMode = "width";
   private focused = false;
   private showMarkers = true;
@@ -151,15 +165,14 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
   private renderedZoom = 1;
   private document: PdfDocument | undefined;
   private loadingTask: PdfLoadingTask | undefined;
-  private renderTask: PdfRenderTask | undefined;
-  private renderedPage: PdfPage | undefined;
   private moduleLoader: PdfJsModuleLoader = loadBundledPdfJs;
   private contextFactory: (canvas: HTMLCanvasElement) => unknown = (canvas) => canvas.getContext("2d", { alpha: false });
 
   constructor() {
     super();
     this.root.innerHTML = pdfViewerTemplate();
-    this.canvas = required(this.root.querySelector("canvas"), HTMLCanvasElement);
+    this.stage = required(this.root.querySelector(".stage"), HTMLElement);
+    this.stage.replaceChildren(this.emptySurface.element);
     this.statusElement = required(this.root.querySelector("[data-status]"), HTMLElement);
     this.fallback = required(this.root.querySelector("[data-open-pdf]"), HTMLAnchorElement);
     this.previousButton = required(this.root.querySelector("[data-previous]"), HTMLButtonElement);
@@ -169,11 +182,8 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
     this.markButton = required(this.root.querySelector("[data-mark]"), HTMLButtonElement);
     this.pageInput = required(this.root.querySelector("[data-page-number]"), HTMLInputElement);
     this.reloadButton = required(this.root.querySelector("[data-reload]"), HTMLButtonElement);
-    this.overlay = required(this.root.querySelector("[data-overlay]"), HTMLElement);
-    this.marquee = required(this.root.querySelector("[data-marquee]"), HTMLElement);
     this.viewportElement = required(this.root.querySelector(".viewport"), HTMLElement);
     this.dialog = required(this.root.querySelector("dialog"), HTMLDialogElement);
-    this.textContainer = required(this.root.querySelector("[data-text-layer]"), HTMLElement);
     this.fitSelect = required(this.root.querySelector("[data-fit]"), HTMLSelectElement);
     this.findInput = required(this.root.querySelector("[data-find-input]"), HTMLInputElement);
     this.findStatus = required(this.root.querySelector("[data-find-status]"), HTMLElement);
@@ -222,18 +232,49 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
     this.zoomOutButton.addEventListener("click", () => { this.runInteraction(() => this.setZoom(this.zoom - ZOOM_STEP)); });
     this.zoomInButton.addEventListener("click", () => { this.runInteraction(() => this.setZoom(this.zoom + ZOOM_STEP)); });
     this.markButton.addEventListener("click", () => { this.setMarking(!this.marking); this.closeOptions(); this.viewportElement.focus(); });
+    this.pageInput.addEventListener("input", () => { this.pageInputDirty = true; });
+    this.pageInput.addEventListener("blur", () => { this.pageInputDirty = false; this.updateControls(); });
+    this.pageInput.addEventListener("keydown", event => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const value = this.pageInput.valueAsNumber;
+        this.pageInputDirty = false;
+        this.showPage(value);
+      }
+    });
     this.pageInput.addEventListener("change", () => {
       const value = this.pageInput.valueAsNumber;
+      this.pageInputDirty = false;
       if (!Number.isSafeInteger(value)) { this.updateControls(); return; }
       this.showPage(value);
     });
     this.root.addEventListener("keydown", event => { if (event instanceof KeyboardEvent) this.onKeyDown(event); });
     this.reloadButton.addEventListener("click", () => { this.closeOptions(); void this.loadSource(this.source, true); });
-    this.overlay.addEventListener("pointerdown", (event) => { this.startSelection(event); });
-    this.overlay.addEventListener("pointermove", (event) => { this.updateSelection(event); });
-    this.overlay.addEventListener("pointerup", (event) => { this.runInteraction(() => this.finishSelection(event)); });
-    this.overlay.addEventListener("pointercancel", () => { this.cancelSelection(); });
-    this.overlay.addEventListener("click", (event) => { this.activateMarker(event); });
+    this.stage.addEventListener("pointerdown", event => {
+      const page = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-page]") : null;
+      const number = Number(page?.dataset["page"]);
+      if (this.surfaces.has(number) && number !== this.pageNumber) {
+        const textToolsOpen = this.control("[data-text-tools]").hidden !== true;
+        this.activatePage(number);
+        if (textToolsOpen) this.toggleTextTools(true);
+        this.runInteraction(() => this.renderWindow());
+      }
+      this.startSelection(event);
+    });
+    this.stage.addEventListener("pointermove", event => { this.updateSelection(event); });
+    this.stage.addEventListener("pointerup", event => { this.runInteraction(() => this.finishSelection(event)); });
+    this.stage.addEventListener("pointercancel", () => { this.cancelSelection(); });
+    this.stage.addEventListener("click", event => { this.activateMarker(event); });
+    this.viewportElement.addEventListener("scroll", () => {
+      if (this.scrollFrame !== undefined) return;
+      this.scrollFrame = requestAnimationFrame(() => {
+        this.scrollFrame = undefined;
+        if (this.layout === undefined || this.layoutChanging || this.dragPointerId !== undefined) return;
+        const next = this.layout.pageAt(this.viewportElement.scrollTop + Math.min(150, this.viewportElement.clientHeight / 4));
+        if (next !== this.pageNumber) this.activatePage(next);
+        this.runInteraction(() => this.renderWindow());
+      });
+    });
     this.hideFallback();
     this.updateControls();
   }
@@ -305,7 +346,12 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
   connectedCallback(): void {
     this.resizeObserver = new ResizeObserver(() => {
       const size = this.currentViewportSize();
-      if (this.fitMode === "custom" || this.viewportElement.clientWidth === 0 || size === this.viewportSize) return;
+      if (this.viewportElement.clientWidth === 0 || size === this.viewportSize) return;
+      if (this.fitMode === "custom") {
+        this.viewportSize = size;
+        this.runInteraction(() => this.renderWindow());
+        return;
+      }
       clearTimeout(this.resizeTimer);
       this.resizeTimer = setTimeout(() => {
         const currentSize = this.currentViewportSize();
@@ -323,6 +369,8 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
     this.setReadingFocus(false);
     this.resizeObserver?.disconnect();
     clearTimeout(this.resizeTimer);
+    if (this.scrollFrame !== undefined) cancelAnimationFrame(this.scrollFrame);
+    this.scrollFrame = undefined;
     window.removeEventListener("pointerdown", this.dismissOptions);
     this.hideFallback();
     void this.dispose(++this.generation);
@@ -435,12 +483,43 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
     }
   }
 
+  private activatePage(number: number): void {
+    if (number === this.pageNumber) return;
+    this.setMarking(false);
+    this.toggleTextTools(false);
+    window.getSelection()?.removeAllRanges();
+    this.renderGeneration++;
+    this.pageNumber = number;
+    this.refreshActivePage();
+  }
+
+  private refreshActivePage(): void {
+    const surface = this.surface;
+    for (const [number, page] of this.surfaces) page.element.dataset["activePage"] = String(number === this.pageNumber);
+    if (surface.ready) this.zoom = this.renderedZoom = surface.scale;
+    if (surface.error !== "") this.setStatus(`Unable to render PDF: ${surface.error}`, "error");
+    else if (surface.ready && !this.layoutChanging) this.setStatus(`Page ${String(this.pageNumber)} of ${String(this.pageCount)} · ${String(Math.round(this.zoom * 100))}%`, "ready");
+    else this.setStatus(`Rendering page ${String(this.pageNumber)}…`, "loading");
+    this.control("[data-text-status]").textContent = surface.textError;
+    this.updateControls();
+  }
+
   private async goToPage(next: number): Promise<void> {
     if (this.document === undefined || !Number.isSafeInteger(next)) return;
     const bounded = Math.max(1, Math.min(this.document.numPages, next));
-    if (bounded === this.pageNumber) { this.updateControls(); return; }
-    this.pageNumber = bounded;
-    await this.renderCurrentPage(this.generation, false);
+    const positionGeneration = ++this.positionGeneration;
+    this.layoutChanging = true;
+    this.pendingPageJump = bounded;
+    this.activatePage(bounded);
+    await this.renderWindow();
+    if (positionGeneration !== this.positionGeneration || bounded !== this.pageNumber || this.layout === undefined) return;
+    this.viewportElement.scrollTop = this.layout.top(bounded) - 20;
+    this.pendingPageJump = undefined;
+    this.viewportElement.scrollLeft = 0;
+    this.paintFindMatches();
+    this.layoutChanging = false;
+    this.refreshActivePage();
+    this.announceReady();
   }
 
   private async setZoom(next: number): Promise<void> {
@@ -451,103 +530,124 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
     await this.renderCurrentPage(this.generation);
   }
 
+  /** Re-layout only for zoom/resize/reload. Ordinary scrolling retains live neighbors. */
   private async renderCurrentPage(generation: number, preservePosition = true): Promise<void> {
-    const document = this.document;
-    if (document === undefined) return;
+    const pdf = this.document;
+    if (pdf === undefined) return;
     const renderGeneration = ++this.renderGeneration;
+    const positionGeneration = ++this.positionGeneration;
+    this.layoutChanging = true;
     this.toggleTextTools(false);
-    const position = { top: this.viewportElement.scrollTop / this.renderedZoom, left: this.viewportElement.scrollLeft / this.renderedZoom };
     this.setMarking(false);
-    this.textLayer?.cancel(); this.textLayer = undefined; this.textContainer.replaceChildren();
-    const previousTask = this.renderTask;
-    previousTask?.cancel();
-    // PDF.js must release the shared canvas before the next render uses it. The
-    // previous operation owns reporting its error; this await only drains it.
-    if (previousTask !== undefined) await previousTask.promise.catch(() => undefined);
-    if (generation !== this.generation || renderGeneration !== this.renderGeneration) return;
-    const previousPage = this.renderedPage;
-    this.renderTask = undefined;
-    this.setStatus(`Rendering page ${String(this.pageNumber)}…`, "loading");
-    this.overlay.hidden = true;
-    const page = await document.getPage(this.pageNumber).catch((error: unknown) => {
-      if (generation !== this.generation || renderGeneration !== this.renderGeneration) return undefined;
-      throw error;
-    });
-    if (page === undefined || generation !== this.generation || renderGeneration !== this.renderGeneration) return;
-    if (previousPage !== page) previousPage?.cleanup?.();
-    this.renderedPage = page;
-    const base = page.getViewport({ scale: 1 });
-    if (!Number.isFinite(base.width) || !Number.isFinite(base.height) || base.width <= 0 || base.height <= 0) throw new Error("PDF page dimensions are invalid");
-    if (base.width > MAX_PDF_RENDER_DIMENSION || base.height > MAX_PDF_RENDER_DIMENSION) throw new Error("PDF page dimensions exceed the safe render limit");
+    const oldTop = this.layout?.top(this.pageNumber) ?? 20;
+    const position = { top: (this.viewportElement.scrollTop - oldTop) / this.renderedZoom, left: this.viewportElement.scrollLeft / this.renderedZoom };
+    this.layout ??= new PdfContinuousLayout(pdf.numPages);
+    this.layout.mode = this.fitMode;
+    this.layout.zoom = this.zoom;
+    this.layout.viewport = { width: this.viewportElement.clientWidth, height: this.viewportElement.clientHeight };
     this.viewportSize = this.currentViewportSize();
-    if (this.fitMode !== "custom") this.zoom = fittedPdfScale(this.fitMode, base, { width: this.viewportElement.clientWidth, height: this.viewportElement.clientHeight });
-    const viewport = page.getViewport({ scale: this.zoom });
-    if (!Number.isFinite(viewport.width) || !Number.isFinite(viewport.height) || viewport.width <= 0 || viewport.height <= 0) throw new Error("PDF page dimensions are invalid");
-    if (viewport.width > MAX_PDF_RENDER_DIMENSION || viewport.height > MAX_PDF_RENDER_DIMENSION) throw new Error("PDF page dimensions exceed the safe render limit");
-    const desiredDpr = Math.min(MAX_DEVICE_PIXEL_RATIO, Math.max(1, window.devicePixelRatio || 1));
-    const outputScale = boundedOutputScale(viewport.width, viewport.height, desiredDpr);
-    this.canvas.width = Math.max(1, Math.floor(viewport.width * outputScale));
-    this.canvas.height = Math.max(1, Math.floor(viewport.height * outputScale));
-    this.canvas.style.width = `${String(Math.floor(viewport.width))}px`;
-    this.canvas.style.height = `${String(Math.floor(viewport.height))}px`;
-    this.overlay.style.width = this.canvas.style.width;
-    this.overlay.style.height = this.canvas.style.height;
-    this.textContainer.style.setProperty("--total-scale-factor", String(this.zoom));
-    this.textContainer.style.setProperty("--scale-round-x", "1px");
-    this.textContainer.style.setProperty("--scale-round-y", "1px");
-    this.viewportElement.scrollTop = preservePosition ? position.top * this.zoom : 0;
-    this.viewportElement.scrollLeft = preservePosition ? position.left * this.zoom : 0;
-    this.renderedZoom = this.zoom;
-    const context = this.contextFactory(this.canvas);
-    if (context === null || context === undefined) throw new Error("Canvas rendering is unavailable");
-    const renderTask = page.render({
-      canvasContext: context,
-      viewport,
-      ...(outputScale === 1 ? {} : { transform: [outputScale, 0, 0, outputScale, 0, 0] }),
-    });
-    this.renderTask = renderTask;
-    try {
-      await renderTask.promise;
-    } catch (error) {
-      // Superseded initial renders must not reach loadSource's document-disposal
-      // path: a resize or zoom now owns the still-valid loading task.
-      if (generation !== this.generation || renderGeneration !== this.renderGeneration) return;
-      throw error;
-    } finally {
-      if (this.renderTask === renderTask) this.renderTask = undefined;
-    }
+    this.windowGeneration++;
+    const old = [...this.surfaces.values()];
+    this.surfaces.clear();
+    this.emptySurface.element.remove();
+    this.draining = Promise.allSettled([this.draining, ...old.map(surface => surface.dispose(false))]).then(() => undefined);
+    this.setStatus(`Rendering page ${String(this.pageNumber)}…`, "loading");
+    await this.draining;
     if (generation !== this.generation || renderGeneration !== this.renderGeneration) return;
-    this.canvas.setAttribute("aria-label", `Visual preview of PDF page ${String(this.pageNumber)} of ${String(document.numPages)}. Use Open PDF for the complete accessible document.`);
-    this.setStatus(`Page ${String(this.pageNumber)} of ${String(document.numPages)} · ${String(Math.round(this.zoom * 100))}%`, "ready");
-    this.overlay.hidden = false;
-    this.renderMarkers();
-    this.updateControls();
-    await this.renderText(page, viewport, generation, renderGeneration);
-    if (generation === this.generation && renderGeneration === this.renderGeneration && this.readyGeneration !== generation) {
-      this.readyGeneration = generation;
-      this.dispatchEvent(new CustomEvent(researchPdfReadyEventName, { detail: { sourceUrl: this.source, pageCount: document.numPages }, bubbles: true, composed: true }));
-    }
+    await this.renderWindow();
+    if (generation !== this.generation || renderGeneration !== this.renderGeneration || positionGeneration !== this.positionGeneration) return;
+    this.renderedZoom = this.layout.scale(this.pageNumber);
+    // A resize may supersede a jump before its scroll offset was applied. Keep
+    // that explicit target rather than preserving the old page's screen position.
+    this.viewportElement.scrollTop = this.layout.top(this.pageNumber) + (preservePosition && this.pendingPageJump !== this.pageNumber ? position.top * this.renderedZoom : -20);
+    this.pendingPageJump = undefined;
+    this.viewportElement.scrollLeft = preservePosition ? position.left * this.renderedZoom : 0;
+    this.paintFindMatches();
+    this.layoutChanging = false;
+    this.refreshActivePage();
+    this.announceReady();
   }
 
-  private async renderText(page: PdfPage, viewport: PdfViewport, generation: number, renderGeneration: number): Promise<void> {
-    const TextLayer = this.pdfjs?.TextLayer;
-    if (TextLayer === undefined || page.getTextContent === undefined) return;
-    const current = (): boolean => generation === this.generation && renderGeneration === this.renderGeneration;
-    try {
-      const content = await page.getTextContent();
-      if (!current()) return;
-      const layer = new TextLayer({ textContentSource: content, container: this.textContainer, viewport });
-      this.textLayer = layer;
-      await layer.render();
-      if (!current()) return;
-      this.paintFindMatches();
-      if (this.control("[data-text-tools]").hidden !== true) this.toggleTextTools(true);
-      this.control("[data-text-status]").textContent = layer.textContentItemsStr.join("").trim() === "" ? "No selectable text on this page. Scanned pages require OCR outside this reader." : "";
-    } catch (error) {
-      if (!current() || isCancellationError(error)) return;
-      this.textLayer = undefined; this.textContainer.replaceChildren();
-      if (this.control("[data-text-tools]").hidden !== true) this.toggleTextTools(true);
-      this.control("[data-text-status]").textContent = `Text selection unavailable: ${formatError(error)}. The page remains readable; use Open PDF for another viewer.`;
+  private positionSurfaces(): void {
+    const layout = this.layout;
+    if (layout === undefined) return;
+    let width = this.viewportElement.clientWidth;
+    for (const [number, surface] of this.surfaces) {
+      const size = layout.size(number);
+      surface.element.style.top = `${String(layout.top(number))}px`;
+      surface.element.style.width = `${String(size.width)}px`;
+      surface.element.style.height = `${String(size.height)}px`;
+      width = Math.max(width, size.width + 40);
+    }
+    this.stage.style.height = `${String(layout.height)}px`;
+    this.stage.style.width = `${String(width)}px`;
+  }
+
+  private pageWindow(): number[] {
+    const layout = this.layout;
+    return layout?.window(this.pageNumber, this.layoutChanging ? layout.top(this.pageNumber) - 20 : this.viewportElement.scrollTop, this.viewportElement.clientHeight) ?? [];
+  }
+
+  private async renderWindow(): Promise<void> {
+    const pdf = this.document, layout = this.layout;
+    if (pdf === undefined || layout === undefined) return;
+    const generation = this.generation;
+    const windowGeneration = ++this.windowGeneration;
+    const wanted = this.pageWindow();
+    const evicted: Promise<void>[] = [];
+    for (const [number, surface] of this.surfaces) {
+      if (!wanted.includes(number)) { this.surfaces.delete(number); evicted.push(surface.dispose()); }
+    }
+    this.draining = Promise.allSettled([this.draining, ...evicted]).then(() => undefined);
+    await this.draining;
+    if (generation !== this.generation || windowGeneration !== this.windowGeneration) return;
+    const work: Promise<void>[] = [];
+    // Render the requested page before its neighbors so its dimensions seed estimates.
+    for (const number of [this.pageNumber, ...wanted.filter(number => number !== this.pageNumber)]) {
+      if (this.surfaces.has(number)) continue;
+      const surface = new PdfPageSurface(number);
+      this.surfaces.set(number, surface);
+      const following = [...this.surfaces.values()].filter(page => page.number > number).sort((a, b) => a.number - b.number)[0];
+      this.stage.insertBefore(surface.element, following?.element ?? null);
+      const current = (): boolean => generation === this.generation && this.surfaces.get(number) === surface;
+      work.push(surface.render({
+        document: pdf, module: this.pdfjs, context: this.contextFactory,
+        measure: base => {
+          if (!current()) return 1;
+          const top = layout.top(this.pageNumber);
+          layout.measure(number, base);
+          this.positionSurfaces();
+          // Disable browser scroll anchoring: preserve the active page ourselves when
+          // a newly measured preceding page changes the estimated document offsets.
+          this.viewportElement.scrollTop += layout.top(this.pageNumber) - top;
+          return layout.scale(number);
+        },
+        changed: () => {
+          if (!current()) return;
+          this.renderMarkers();
+          if (number === this.pageNumber) {
+            this.refreshActivePage();
+            this.paintFindMatches();
+            if (this.control("[data-text-tools]").hidden !== true) this.toggleTextTools(true);
+            this.announceReady();
+          }
+        },
+      }));
+    }
+    this.positionSurfaces();
+    this.refreshActivePage();
+    await Promise.all(work);
+    if (generation !== this.generation || windowGeneration !== this.windowGeneration) return;
+    this.refreshActivePage();
+    this.announceReady();
+    // Measuring a short or landscape page can reveal another visible page.
+    if (this.pageWindow().some(number => !this.surfaces.has(number))) await this.renderWindow();
+  }
+
+  private announceReady(): void {
+    if (!this.layoutChanging && this.surface.ready && this.surface.finished && this.readyGeneration !== this.generation) {
+      this.readyGeneration = this.generation;
+      this.dispatchEvent(new CustomEvent(researchPdfReadyEventName, { detail: { sourceUrl: this.source, pageCount: this.pageCount }, bubbles: true, composed: true }));
     }
   }
 
@@ -556,14 +656,21 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
     this.sourceAbort = undefined;
     this.findGeneration++;
     this.toggleTextTools(false);
-    this.textLayer?.cancel(); this.textLayer = undefined; this.textContainer.replaceChildren();
+    this.setMarking(false);
+    this.windowGeneration++;
+    const disposed = [...this.surfaces.values()].map(surface => surface.dispose());
+    this.surfaces.clear();
+    this.draining = Promise.allSettled([this.draining, ...disposed]).then(() => undefined);
+    this.layout = undefined;
+    this.positionGeneration++;
+    this.pendingPageJump = undefined;
+    this.pageInputDirty = false;
+    this.layoutChanging = false;
+    this.stage.style.height = "";
+    this.stage.style.width = "";
     this.pdfjs = undefined;
     this.setMarking(false);
     this.renderGeneration += 1;
-    this.renderTask?.cancel();
-    this.renderTask = undefined;
-    this.renderedPage?.cleanup?.();
-    this.renderedPage = undefined;
     const loadingTask = this.loadingTask;
     this.loadingTask = undefined;
     this.document = undefined;
@@ -613,7 +720,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
     required(this.root.querySelector("[data-text-toggle]"), HTMLButtonElement).disabled = this.markButton.disabled;
     this.pageInput.disabled = pages === 0;
     this.pageInput.max = String(Math.max(1, pages));
-    this.pageInput.value = String(this.pageNumber);
+    if (!this.pageInputDirty) this.pageInput.value = String(this.pageNumber);
     this.control("[data-page-count]").textContent = String(pages);
     this.fitSelect.disabled = pages === 0;
     this.fitSelect.value = this.fitMode === "custom" ? ([1, 1.5, 2, 3].includes(this.zoom) ? String(this.zoom) : "custom") : this.fitMode;
@@ -677,13 +784,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
     if (key === "0") action = () => { this.fitMode = "width"; this.runInteraction(() => this.renderCurrentPage(this.generation)); };
     if (key === " " || key === "pagedown" || key === "pageup") action = () => {
       const backwards = key === "pageup" || (key === " " && event.shiftKey);
-      const atEdge = backwards ? this.viewportElement.scrollTop <= 1 : this.viewportElement.scrollTop + this.viewportElement.clientHeight >= this.viewportElement.scrollHeight - 1;
-      if (atEdge) this.runInteraction(async () => {
-        const before = this.pageNumber;
-        await this.goToPage(this.pageNumber + (backwards ? -1 : 1));
-        if (backwards && before !== this.pageNumber) this.viewportElement.scrollTop = this.viewportElement.scrollHeight;
-      });
-      else this.viewportElement.scrollBy({ top: this.viewportElement.clientHeight * .85 * (backwards ? -1 : 1), behavior: "auto" });
+      this.viewportElement.scrollBy({ top: this.viewportElement.clientHeight * .85 * (backwards ? -1 : 1), behavior: "auto" });
     };
     if (action !== undefined) { event.preventDefault(); action(); }
   }
@@ -733,7 +834,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
           scanned = number;
         } finally {
           // Never clean up a page owned by a concurrent visual render.
-          if (page !== this.renderedPage && number !== this.pageNumber) page.cleanup?.();
+          if (![...this.surfaces.values()].some(surface => surface.page === page || surface.number === number)) page.cleanup?.();
         }
         if (hits.length >= PDF_FIND_MAX_HITS) break;
         // Yield between pages so closing/changing search can cancel a cached PDF scan.
@@ -769,9 +870,13 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
   }
 
   private paintFindMatches(): void {
-    const layer = this.textLayer;
+    for (const surface of this.surfaces.values()) this.paintPageFindMatches(surface);
+  }
+
+  private paintPageFindMatches(surface: PdfPageSurface): void {
+    const layer = surface.textLayer;
     if (layer === undefined) return;
-    const hits = this.findHits.filter(hit => hit.page === this.pageNumber);
+    const hits = this.findHits.filter(hit => hit.page === surface.number);
     const active = this.findHits[this.findIndex];
     let offset = 0;
     layer.textDivs.forEach((span, index) => {
@@ -791,10 +896,10 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
       span.replaceChildren(...fragments);
       offset += text.length + 1;
     });
-    const mark = this.textContainer.querySelector<HTMLElement>("mark[data-current]");
+    const mark = surface.textContainer.querySelector<HTMLElement>("mark[data-current]");
     // Also handles searches that finish before the current page's text layer.
     // Scroll only this reader, never the enclosing workbench or host.
-    if (this.findScrollPending && mark !== null) {
+    if (this.findScrollPending && surface.number === this.pageNumber && mark !== null) {
       this.findScrollPending = false;
       const box = mark.getBoundingClientRect(); const view = this.viewportElement.getBoundingClientRect();
       this.viewportElement.scrollTop += box.top - view.top - this.viewportElement.clientHeight / 3;
@@ -804,7 +909,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
 
   private toggleTextTools(open: boolean): void {
     this.control("[data-text-tools]").hidden = !open;
-    this.overlay.dataset["textSelecting"] = String(open);
+    for (const surface of this.surfaces.values()) surface.overlay.dataset["textSelecting"] = String(open);
     this.control("[data-text-toggle]").setAttribute("aria-expanded", String(open));
     this.control("[data-selection-status]").textContent = "";
     this.control("[data-text-preview]").textContent = "";
@@ -908,7 +1013,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
     const generation = this.generation;
     const renderGeneration = this.renderGeneration;
     const detail: ResearchPdfSelectionDetail = { page: this.pageNumber, rect, quote: await this.quoteForRect(rect) };
-    if (!this.isConnected || generation !== this.generation || renderGeneration !== this.renderGeneration) return;
+    if (!this.isConnected || generation !== this.generation || renderGeneration !== this.renderGeneration || detail.page !== this.pageNumber) return;
     this.setReadingFocus(false);
     this.dispatchEvent(new CustomEvent<ResearchPdfSelectionDetail>(researchPdfSelectionEventName, { detail, bubbles: true, composed: true }));
   }
@@ -959,7 +1064,11 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
   }
 
   private renderMarkers(): void {
-    const visible = this.document === undefined || !this.showMarkers ? [] : this.markers.filter((marker) => marker.page === this.pageNumber);
+    for (const surface of this.surfaces.values()) this.renderPageMarkers(surface);
+  }
+
+  private renderPageMarkers(surface: PdfPageSurface): void {
+    const visible = this.document === undefined || !this.showMarkers ? [] : this.markers.filter((marker) => marker.page === surface.number);
     const elements = visible.map((marker) => {
       const element = document.createElement("button");
       element.type = "button";
@@ -973,7 +1082,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
       applyRectStyle(element, marker.rect);
       return element;
     });
-    this.overlay.replaceChildren(this.marquee, ...elements);
+    surface.overlay.replaceChildren(surface.marquee, ...elements);
   }
 }
 
@@ -982,14 +1091,6 @@ function applyRectStyle(element: HTMLElement, rect: PdfRect): void {
   element.style.top = `${String(rect.y * 100)}%`;
   element.style.width = `${String(rect.width * 100)}%`;
   element.style.height = `${String(rect.height * 100)}%`;
-}
-
-export function boundedOutputScale(width: number, height: number, desiredScale: number): number {
-  const safeWidth = Math.max(1, width);
-  const safeHeight = Math.max(1, height);
-  const pixelBound = Math.sqrt(MAX_PDF_RENDER_PIXELS / (safeWidth * safeHeight));
-  const dimensionBound = Math.min(MAX_PDF_RENDER_DIMENSION / safeWidth, MAX_PDF_RENDER_DIMENSION / safeHeight);
-  return Math.min(desiredScale, pixelBound, dimensionBound);
 }
 
 async function loadBundledPdfJs(): Promise<PdfJsModule> {

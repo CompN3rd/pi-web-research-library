@@ -33,12 +33,13 @@ export function pdfViewerTemplate(): string {
       .text-tools select { display:block; width:100%; max-width:100%; }
       .text-tools blockquote { max-height:5em; overflow:auto; margin:6px 0; white-space:pre-wrap; }
       .text-tools button { border-color:var(--pi-border, #ccd0d7); }
-      .viewport { overflow:auto; overscroll-behavior:contain; height:clamp(320px, 72dvh, 1100px); background:#e5e7eb; scrollbar-gutter:stable; outline-offset:-3px; }
+      .viewport { overflow:auto; overscroll-behavior:contain; overflow-anchor:none; height:clamp(320px, 72dvh, 1100px); background:#e5e7eb; scrollbar-gutter:stable; outline-offset:-3px; }
       .reader:modal .viewport { height:auto; flex:1; min-height:0; }
       @media(max-width:800px) { :host([annotation-open]) .reader:not(:modal) .viewport { height:38dvh; min-height:180px; } }
       @media(pointer:coarse) { button, summary, select, a { min-height:44px; } }
-      .stage { min-width:100%; width:max-content; min-height:100%; display:flex; justify-content:center; align-items:flex-start; padding:20px; }
-      .page { position:relative; flex:none; line-height:0; box-shadow:0 2px 5px #0002,0 12px 36px #0001; background:white; }
+      .stage { position:relative; min-width:100%; min-height:100%; overflow-anchor:none; }
+      .page { position:absolute; left:50%; transform:translateX(-50%); line-height:0; box-shadow:0 2px 5px #0002,0 12px 36px #0001; background:white; }
+      .page-error { position:absolute; inset:20px; color:#b42318; line-height:1.5; }
       canvas { display:block; max-width:none; background:white; }
       .reader[data-tone=warm] .viewport { background:#d9d3c6; }
       .reader[data-tone=warm] canvas { filter:sepia(.2); }
@@ -68,7 +69,7 @@ export function pdfViewerTemplate(): string {
       .mark-hint { position:absolute; bottom:40px; left:12px; right:12px; z-index:4; padding:8px 12px; border:1px solid var(--pi-accent, #2965cc); border-radius:8px; background:var(--pi-bg, #fff); box-shadow:0 3px 12px #0002; font-size:13px; }
       .mark-hint button { float:right; min-height:0; padding:0 6px; }
       @media(prefers-color-scheme:dark) { :host { color:var(--pi-fg, #e6edf3); } .reader, .menu, input, select { background:var(--pi-bg, #161b22); } .viewport { background:#252a33; } }
-      @media(max-width:500px) { .toolbar { gap:4px; padding:6px; } .toolbar select { max-width:105px; } .toolbar > button { padding:6px; } .stage { padding:20px; } .focus-label { display:none; } }
+      @media(max-width:500px) { .toolbar { gap:4px; padding:6px; } .toolbar select { max-width:105px; } .toolbar > button { padding:6px; }  .focus-label { display:none; } }
     </style>
     <dialog open class="reader" role="region" aria-label="PDF reader" data-tone="paper">
       <div class="toolbar" aria-label="PDF controls">
@@ -89,7 +90,7 @@ export function pdfViewerTemplate(): string {
           <label><input type="checkbox" data-markers checked> Show evidence markers</label>
           <hr><button type="button" data-reload>Reload PDF</button>
           <a data-open-pdf target="_blank" rel="noopener noreferrer" hidden aria-disabled="true" tabindex="-1">Open PDF</a>
-          <p class="help">← / → pages · Space scrolls, then turns page<br>G go to page · + / − zoom · 0 fit width<br>F focus · Esc close / cancel<br>Select text to copy or annotate. Mark a region to save evidence.<br>Page tones alter colors, not the original file.</p>
+          <p class="help">← / → pages · Space scrolls across pages<br>G go to page · + / − zoom · 0 fit width<br>F focus · Esc close / cancel<br>Select text to copy or annotate. Mark a region to save evidence.<br>Page tones alter colors, not the original file.</p>
         </div></details>
       </div>
       <form id="pdf-find" class="findbar" data-find-bar hidden role="search" aria-label="Find in this PDF">
@@ -112,12 +113,8 @@ export function pdfViewerTemplate(): string {
         <p data-selection-status role="status" aria-live="polite"></p>
       </section>
       <div data-text-status role="status"></div>
-      <div class="viewport" tabindex="0" role="region" aria-label="PDF page. Select text to copy; use arrow keys to change pages.">
-        <div class="stage"><div class="page">
-          <canvas aria-label="PDF visual preview. No page rendered; use Open PDF when available for the complete document."></canvas>
-          <div class="textLayer" data-text-layer></div>
-          <div class="overlay" data-overlay data-marking="off"><div class="marquee" data-marquee hidden></div></div>
-        </div></div>
+      <div class="viewport" tabindex="0" role="region" aria-label="PDF pages. Scroll to read; select text to copy; use arrow keys to change pages.">
+        <div class="stage"></div>
       </div>
       <footer><span data-status role="status" aria-live="polite">No PDF selected.</span><progress data-progress max="1" value="0" aria-label="Document progress"></progress></footer>
     </dialog>

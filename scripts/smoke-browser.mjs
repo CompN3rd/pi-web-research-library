@@ -13,6 +13,7 @@ import { syntheticPdf, syntheticReaderPdf } from "./synthetic-pdf.mjs";
 import { smokeReader } from "./smoke-reader.mjs";
 import { smokeReaderAnnotations } from "./smoke-reader-annotations.mjs";
 import { smokeReaderTextComments } from "./smoke-reader-text-comments.mjs";
+import { smokeContinuousReader } from "./smoke-reader-continuous.mjs";
 
 await mkdir(".smoke", { recursive: true });
 await build({ entryPoints: ["src/server/fixture.testSupport.ts"], outfile: ".smoke/fixture.js", bundle: true, platform: "node", format: "esm" });
@@ -67,6 +68,7 @@ try {
   await page.close();
   const checks = await smokeNative({ browser, url, fixture: f, host, errors });
   checks.push(...await smokeReader({ browser, url, errors }));
+  checks.push(...await smokeContinuousReader({ browser, url, errors, fixture: f }));
   checks.push(...await smokeReaderAnnotations({ browser, url, errors }));
   checks.push(...await smokeReaderTextComments({ browser, url, errors }));
   assert(operations.some(op => op.operation === "library.pdf.open"));

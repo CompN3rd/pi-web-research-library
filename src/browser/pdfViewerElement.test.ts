@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 describe("ResearchLibraryPdfViewerElement", () => {
-  it("loads with hardened options, renders one page, and bounds page/zoom controls", async () => {
+  it("loads with hardened options, preloads a neighbor, and bounds page/zoom controls", async () => {
     const harness = fakePdfJs(2);
     const element = createViewer();
     element.pdfJsLoader = harness.loader;
@@ -43,7 +43,7 @@ describe("ResearchLibraryPdfViewerElement", () => {
     expect(shadowButton(element, "[data-mark]").disabled).toBe(false);
 
     shadowButton(element, "[data-previous]").click();
-    expect(harness.document.getPage).toHaveBeenCalledTimes(1);
+    expect(harness.document.getPage).toHaveBeenCalledTimes(2);
     shadowButton(element, "[data-next]").click();
     await statusIncludes(element, "Page 2 of 2");
     shadowButton(element, "[data-next]").click();
@@ -61,7 +61,7 @@ describe("ResearchLibraryPdfViewerElement", () => {
     expect(fallback.hidden).toBe(false);
     expect(fallback.target).toBe("_blank");
     expect(fallback.rel).toContain("noopener");
-    expect(shadow(element, "canvas", HTMLCanvasElement).getAttribute("aria-label")).toContain("page 2 of 2");
+    expect(shadow(element, "[data-active-page=true] canvas", HTMLCanvasElement).getAttribute("aria-label")).toContain("page 2 of 2");
   });
 
   it("announces a rendered source so a pending evidence backlink can select its page", async () => {
@@ -184,12 +184,12 @@ describe("ResearchLibraryPdfViewerElement", () => {
 
   it("surfaces page and render failures through the handled status path", async () => {
     const pageFailure = fakePdfJs(2);
+    pageFailure.document.getPage.mockImplementation((number: number) => number === 2 ? Promise.reject(new Error("page failed")) : Promise.resolve(pageAt(pageFailure.pages, number - 1)));
     const element = createViewer();
     element.pdfJsLoader = pageFailure.loader;
     document.body.append(element);
     element.sourceUrl = "paper.pdf";
     await statusIncludes(element, "Page 1 of 2");
-    pageFailure.document.getPage.mockRejectedValueOnce(new Error("page failed"));
     shadowButton(element, "[data-next]").click();
     await statusIncludes(element, "page failed");
 
@@ -520,7 +520,7 @@ describe("region marking", () => {
     expect(selections).toEqual([]);
   });
 
-  it("paints stored annotations for the visible page and reports taps on them", async () => {
+  it("paints stored annotations on their own resident pages and reports taps on them", async () => {
     const harness = fakePdfJs(2);
     const element = createViewer();
     element.pdfJsLoader = harness.loader;
@@ -535,7 +535,7 @@ describe("region marking", () => {
     element.activeAnnotationId = "ann-1";
 
     const markers = shadowRoot(element).querySelectorAll("[data-annotation-id]");
-    expect([...markers].map((marker) => marker.getAttribute("data-annotation-id"))).toEqual(["ann-1"]);
+    expect([...markers].map((marker) => marker.getAttribute("data-annotation-id"))).toEqual(["ann-1", "ann-2"]);
     const marker = markers[0];
     if (!(marker instanceof HTMLElement)) throw new Error("Expected a rendered marker");
     expect(marker.dataset["active"]).toBe("true");
@@ -549,8 +549,8 @@ describe("region marking", () => {
 
     shadowButton(element, "[data-next]").click();
     await statusIncludes(element, "Page 2 of 2");
-    expect([...shadowRoot(element).querySelectorAll("[data-annotation-id]")].map((entry) => entry.getAttribute("data-annotation-id"))).toEqual(["ann-2"]);
-    expect(shadowRoot(element).querySelector("[data-annotation-id]")?.getAttribute("aria-label")).toBe("Highlight on page 2: Later");
+    expect([...shadowRoot(element).querySelectorAll("[data-active-page=true] [data-annotation-id]")].map((entry) => entry.getAttribute("data-annotation-id"))).toEqual(["ann-2"]);
+    expect(shadowRoot(element).querySelector("[data-page=\"2\"] [data-annotation-id]")?.getAttribute("aria-label")).toBe("Highlight on page 2: Later");
   });
 
   it("jumps to a page on request and clamps out-of-range requests", async () => {
@@ -567,6 +567,69 @@ describe("region marking", () => {
     await settle();
     expect(element.currentPage).toBe(3);
     expect(element.pageCount).toBe(3);
+  });
+});
+
+describe("continuous page surfaces", () => {
+  it("does not overwrite a page number being typed when delayed text finishes", async () => {
+    const harness = fakePdfJs(3); addTextLayer(harness.module);
+    const content = await pageAt(harness.pages, 0).getTextContent();
+    let finish!: (value: typeof content) => void;
+    pageAt(harness.pages, 0).getTextContent.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const element = createViewer(); element.pdfJsLoader = harness.loader;
+    document.body.append(element); element.sourceUrl = "paper.pdf";
+    await statusIncludes(element, "Page 1 of 3");
+    const input = shadow(element, "[data-page-number]", HTMLInputElement);
+    input.focus(); input.value = "3"; input.dispatchEvent(new Event("input"));
+    finish(content); await settle();
+    expect(input.value).toBe("3");
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await statusIncludes(element, "Page 3 of 3");
+    expect(element.currentPage).toBe(3);
+  });
+
+  it("retains adjacent text/canvases across navigation and evicts distant page resources", async () => {
+    const harness = fakePdfJs(8); addTextLayer(harness.module);
+    const element = createViewer(); element.pdfJsLoader = harness.loader;
+    document.body.append(element); element.sourceUrl = "paper.pdf"; await settle();
+    const firstCanvas = shadow(element, '[data-page="1"] canvas', HTMLCanvasElement);
+    const secondCanvas = shadow(element, '[data-page="2"] canvas', HTMLCanvasElement);
+    element.showPage(2); await settle();
+    expect(shadow(element, '[data-page="2"] canvas', HTMLCanvasElement)).toBe(secondCanvas);
+    expect(element.shadowRoot?.querySelectorAll("canvas")).toHaveLength(3);
+    expect(pageAt(harness.pages, 1).render).toHaveBeenCalledOnce();
+    element.showPage(6); await settle();
+    expect([...shadowRoot(element).querySelectorAll<HTMLElement>("[data-page]")].map(page => page.dataset["page"]).sort()).toEqual(["5", "6", "7"]);
+    expect(firstCanvas.width).toBe(0);
+    expect(secondCanvas.width).toBe(0);
+    expect(pageAt(harness.pages, 0).cleanup).toHaveBeenCalled();
+    expect(pageAt(harness.pages, 1).cleanup).toHaveBeenCalled();
+    element.showPage(1); await settle();
+    expect(shadow(element, '[data-page="1"] [data-text-layer]', HTMLElement).textContent).toContain("Inside the region");
+    expect(pageAt(harness.pages, 0).render).toHaveBeenCalledTimes(2);
+    element.remove(); await settle();
+    expect(harness.loadingTask.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("activates a touched neighboring text page without replacing its selection layer", async () => {
+    const harness = fakePdfJs(3); addTextLayer(harness.module);
+    const element = createViewer(); element.pdfJsLoader = harness.loader;
+    document.body.append(element); element.sourceUrl = "paper.pdf"; await settle();
+    shadowButton(element, "[data-text-toggle]").click();
+    const text = shadow(element, '[data-page="2"] [data-text-layer]', HTMLElement);
+    text.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch" }));
+    await settle();
+    expect(element.currentPage).toBe(2);
+    expect(shadow(element, '[data-active-page=true] [data-text-layer]', HTMLElement)).toBe(text);
+    expect(shadow(element, "[data-text-tools]", HTMLElement).hidden).toBe(false);
+    const selected = vi.fn(); element.addEventListener(researchPdfSelectionEventName, selected);
+    vi.spyOn(shadow(element, '[data-page="2"] canvas', HTMLCanvasElement), "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 1000, 800));
+    for (const span of text.querySelectorAll<HTMLElement>("span")) vi.spyOn(span, "getBoundingClientRect").mockReturnValue(new DOMRect(100, 80, 400, 80));
+    shadowButton(element, "[data-passage-comment]").click();
+    expect(selected).toHaveBeenCalledOnce();
+    const event: unknown = selected.mock.calls[0]?.[0];
+    expect(event).toBeInstanceOf(CustomEvent);
+    if (event instanceof CustomEvent) expect(event.detail).toMatchObject({ page: 2, quote: "Inside the region", rect: { x: .1, y: .1, width: .4, height: .1 } });
   });
 });
 
