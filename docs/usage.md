@@ -1,77 +1,95 @@
-# Usage and migration
+# Usage and greenfield cutover
 
-## A local pilot library
+## Library
 
-The Research panel discovers `raw/_processed/research-library-pilot/library.json` in the selected workspace. This remains the existing bounded pilot format, not a general import/search service. It supports 1–20 papers and PDFs up to 128 MiB each. A minimal manifest has this shape:
+Open **Library** in any selected workspace. No manifest or reference-manager account is needed. One catalog at `.pi-web/research-library/library.json` owns references, evidence, research tasks and manuscripts. It is created only by an explicit first save/import; reads of an empty workspace do not create files. **Discover** is the companion literature-search surface. These are the only product panels.
 
-```json
-{
-  "version": 1,
-  "pilot": true,
-  "libraryId": "pilot-demo",
-  "papers": [{
-    "id": "pilot-paper",
-    "bibkey": "Example2026",
-    "title": "Example paper",
-    "authors": ["Example author"],
-    "sourceNotePath": "Thesis/Citations/Example2026.md",
-    "sourceNoteSha256": "REPLACE_WITH_64_LOWERCASE_HEX_CHARACTERS",
-    "relatedTopics": [],
-    "metaCategories": [],
-    "usedBy": [],
-    "pdf": {
-      "path": "raw/research-library-pilot/paper.pdf",
-      "sha256": "REPLACE_WITH_64_LOWERCASE_HEX_CHARACTERS",
-      "size": 12345,
-      "sourceUrl": "https://example.org/paper.pdf",
-      "sourcePageUrl": "https://example.org/paper",
-      "retrievedAt": "2026-08-08T12:00:00.000Z",
-      "rights": "local-research-copy; redistribution-not-asserted"
-    }
-  }]
-}
-```
+### References, collections and imports
 
-Replace the digests, byte size, source URLs and retrieval time with the real local document's metadata; placeholders deliberately fail validation. IDs must start with `pilot-`. Store source notes beneath `Thesis/Citations/` and PDFs beneath `raw/research-library-pilot/`, using normalized workspace-relative paths. Unknown fields, oversized files and invalid identities fail closed. The companion reads the same manifest without needing PI WEB running.
+Create/edit references with citation keys, authors, publication metadata, DOI/ISBN/URLs, abstract, notes, tags, favorites and reading status. Organize hierarchical collections; record inclusion/exclusion screening decisions and reasons. Filters and multiselect let you work on a bounded corpus without remounting the PDF reader. Refresh after another tab or agent changes saved state; stale edits are rejected, not merged over newer data.
 
-The panel displays provenance as **manifest declarations**, not verified URL ownership or redistribution permission. The server hashes a PDF before admitting its reader, compares its actual size and digest, and then serves an immutable local snapshot. It does not fetch the source URL, hash the source note at display time, or infer citation edges from topic/wiki relations.
+Import **BibTeX**, **RIS** or **CSL-JSON** by file/paste, inspect the preview, warnings and possible duplicates, then explicitly check the rows to commit. Standard interchange is file portability, not a Paperpile/Zotero connector. Exact format/file/row retries do not overwrite imported records, including edited or trashed records. Changed/re-exported files are new imports. Duplicate review has an explicit survivor choice; merge preserves the loser as a tombstone and keeps historical evidence attribution. Merging a losing reference with active evidence is blocked to preserve usable evidence and PDF backlinks; keep both references instead. Review metadata after conversion: unsupported fields, names and dates can be lossy. Export selected references in the same formats.
 
-## Reading and marking
+Trash/restore references without deleting their PDFs. Restoring an old citation key can conflict with a current record and will require review. Citation-key edits preserve usable aliases; ambiguous keys must never be silently resolved. Limits are explicit: 5,000 references; 1MiB import text; 192KiB complete preview; 2MiB export text. Split oversized batches rather than expecting hidden truncation. See [all bounds](architecture.md#library-ownership-and-composition).
 
-Select a paper, use the page/zoom controls, choose **Mark region**, and drag over the passage. Enter a question or note and save it. Extracted text may be empty for scanned documents; the page rectangle remains the anchor. The reader is a visual canvas preview, not a complete accessible PDF viewer. **Open PDF** uses the host's download helper.
+### PDFs, evidence and text search
 
-Annotations are stored at `.pi-web/research-library-runtime/annotations/<paperId>/<annotationId>.json`. Their anchor (paper, PDF digest, page, rectangle and quote) is immutable. Editing text or resolving/reopening increments the revision. Stale edits and deletions fail visibly rather than overwrite a newer record. Refresh after a conflict.
+Attach a contained existing workspace-relative PDF, or upload through the host file helper to `raw/research-library` without overwrite. Enter provenance and rights declarations; they do not establish ownership or redistribution permission. Up to 16 PDFs/reference and 128MiB/PDF are admitted after server-side file, size, signature and SHA-256 checks. Opening always verifies the saved identity; replacing a file behind the catalog is an error, not a new revision of old evidence.
 
-A save with an uncertain response retains its original record for **Retry original save**. That retry cannot replace another record. Inspect the refreshed list before cancelling an uncertain save and creating a new one. Edits/deletions are not automatically replayed after a transport failure.
+#### Read first, tools when needed
 
-**Delete is recoverable soft deletion:** the server atomically renames the file to `<annotationId>.deleted`. It disappears from the panel and read tools but retains its contents on disk, prevents a delayed create retry from resurrecting it, and can be restored manually with the writer stopped. It is not secure erasure. Include these recovery files in privacy/backup/retention decisions. Do not manually reuse deleted IDs.
+**Reader** opens the first attachment automatically. The catalog steps out of the way; **Show library** brings it back without closing the PDF. Switch attachments using **Reading document** when a reference has several PDFs. Attachment, provenance and verified-index tools live below the page in **Documents & research tools**.
 
-Use one active Research Library writer per physical workspace. Server serialization protects cooperating requests within one daemon, not concurrent external file editors, the old fork, another daemon, or arbitrary tools running as your account. Back up records before manual changes. Do not treat local JSON as a tamper-resistant database.
+- **Fit width** is the default and follows panel/window resizing. **Fit page** shows the entire page; the zoom menu also offers fixed sizes. Zooming preserves the approximate position within the page.
+- **Focus** fills the browser viewport with the reader, without reloading the PDF. Escape exits and returns keyboard focus to the control. This is a reading overlay, not browser/OS fullscreen.
+- Select and copy text directly from text-bearing pages. **Find** searches this PDF locally, highlights matches and jumps to the passage; Enter/Shift+Enter moves through found results. This does not create a server index, call a model, or turn browser text into verified evidence. Search is case-insensitive and literal, bounded to the first 500 pages, 1,000 matches and 1,000,000 extracted characters per page. Limits, failures and pages without text are reported; incomplete results are not an exhaustive search.
+- **More reader options** contains zoom steps, Paper/Warm/Night page tones, **Mark region**, the evidence-marker visibility toggle, **Reload PDF** and **Open PDF**. Tones alter displayed colors, including figures; switch back to Paper for color-sensitive inspection. PDF bytes stay unchanged.
+- With the page focused: **← / →** changes pages, **Space / Shift+Space** scrolls by a screenful then turns the page at the boundary, **Home / End** jumps to first/last page, **G** focuses the page field, **+ / −** zooms, **0** fits width, and **F** toggles Focus. **Ctrl/⌘ F** opens reader Find while focus is inside the reader. Shortcuts do not hijack typing in forms. Escape closes the current search/options/marking mode before leaving Focus.
 
-PDF readers expire after two idle minutes to reclaim temporary snapshots. If an unloaded page needs an expired reader, refresh/reopen it. At most four snapshots can be active or opening per server plugin. Closing a browser is best-effort cleanup; abandoned snapshots expire and crash leftovers are removed on plugin startup.
+The reader renders one page at a time to keep canvas memory bounded; it is not a continuous-scroll, thumbnail or form-filling viewer. Page, zoom and text selection are transient, not durable reading history. Scanned pages require OCR outside this package. Text selection/reading order can be imperfect in columns, formulas or unusual fonts; **Open PDF** remains available for a full-featured external viewer.
+
+#### Evidence and verified corpus text
+
+Choose **More reader options → Mark region** and drag over a passage to create anchored evidence. The notebook supports quotes, notes and questions, immutable source/page/rectangle/quote anchors, revisions, tags and open/resolved state. Unattached notes are explicitly unanchored, not fabricated PDF evidence. For document-backed evidence and passage tools, explicitly **index PDF text** first. Indexing is local server extraction, never browser/model-provided full text. A separate rebuild action can regenerate a damaged derivative index after verifying the unchanged PDF; normal reads do not silently repair corruption. Scanned/image-only pages have no text unless you supply a separately produced, explicitly attached text-bearing PDF; this package does not perform OCR. Check visual reading order, formulas and exact quotes yourself.
+
+Full-text search uses indexed attachments in the selected references. It returns bounded page hits and source hashes; narrow large corpora when the scan budget is exceeded. A page backlink waits for the matching reader to become ready. Notebook markers reflect loaded notebook rows, not an unbounded scan of every stored annotation. Original PDF bytes are never rewritten with embedded marks. The reader provides a selectable text layer but not a complete tagged-PDF accessibility implementation; **Open PDF** uses the host's download helper.
+
+PDF readers expire after two idle minutes. Choose **More reader options → Reload PDF** to open a fresh verified snapshot while preserving page and zoom/fit mode. At most four snapshots can be active or opening per server plugin. Closing a browser provides only best-effort cleanup; abandoned snapshots expire and crash leftovers are removed at plugin startup.
+
+Deleting evidence retains both a catalog tombstone and `.pi-web/research-library/evidence/<id>.<revision>.json.deleted`. Recovery is an operator task with the writer stopped; do not reuse deleted IDs. Text indexes are derivative workspace files and retain extracted content even if a reference is trashed. Include catalog, recovery files and indexes in backup/privacy decisions: **delete is not secure erasure**.
+
+### Agent research, review and manuscript use
+
+1. Select 1–20 references and choose a recipe: summary, critique, comparison, extraction, outline, related work, manuscript audit, or reviewer response. Supply the goal and any necessary original-research/draft/reviewer context. Metadata-only sources do not become full-text evidence merely because they were selected.
+2. Preview the exact prompt, frozen corpus and disclosure. Confirm only if you permit the selected machine's configured model/provider to receive the research context. The task starts a new visible Pi conversation; mounting/filtering/refreshing does not start models.
+3. Follow bounded progress watching or manual refresh and the full session ID. Use **Sessions** to inspect, continue or stop the conversation. Closing the panel is not cancellation. Ordinary Pi tools keep normal account permissions: instructions to avoid edits are **not a sandbox**, and agents can disclose/read additional workspace data through their ordinary tools.
+4. The companion submits a structured result with source-linked claims, extraction/comparison cells and warnings. The backend validates and saves it; the initial turn must also finish successfully. Missing companion, timeout, source changes or provider errors remain failures/interruption, not accepted output.
+5. Review the actual sources and explicitly accept/reject the completed result. This does not resolve notebook questions automatically. Accepted/current results can seed a manuscript; acceptance is not proof of scientific correctness or a manuscript-file write.
+
+One task/workspace and four per backend can be tracked at once; 200 receipts are retained. Refresh after an uncertain reply rather than creating another task. Stable task IDs prevent exact replay from starting a second session. After a backend restart, unfinished work is interrupted, not resubmitted. Do not delete receipts merely to retry: inspect the existing session first. No background scheduler or vendor agent service is involved.
+
+### Manuscripts, citations and file application
+
+Create/edit Markdown drafts, insert reference keys with the citation picker, and link accepted research results. Use Pandoc citation syntax such as `[@Example2026, p. 3]` or narrative `@Example2026`; keep code samples in code spans/fences. Choose APA, Vancouver or Harvard style. Audit checks unresolved/ambiguous keys, missing reference bindings and stale research/evidence. It cannot decide whether a scientific claim follows from a cited passage. If source changes make a linked task stale, explicitly **Remove task binding** under Draft source bindings to keep editing the same manuscript. This preserves the text but removes that task's acceptance association; review the sources again before publication.
+
+Export Markdown, LaTeX, escaped HTML or a portable JSON bundle containing bibliography formats, catalog records and evidence/task provenance (not PDF bytes). Vancouver citations and bibliography follow first citation occurrence, resolving aliases to the same source. Uncited bindings remain at the end in binding order and are flagged by audit. HTML/LaTeX format supported citations through CSL; there is no installed Word/Google Docs field plugin or TeX engine. Output remains a draft requiring review.
+
+To apply a draft inside the workspace, choose an existing directory and a Markdown/text target, request the file-change preview, inspect the generated text/diff, and separately confirm. The backend binds the precise preview—including bibliography changes—to a token, manuscript revision and target hash. A changed target, expired token (15 minutes), restart or changed output requires re-preview. Existing contents are backed up before replacement. Protected source/config/library/recovery files, symlinks, hard links and executable targets are refused. Download/export is separate from this file-writing action.
+
+Metadata, evidence and manuscript forms preserve independent unsaved text across refresh and in-instance workspace switching; save/discard explicitly before incompatible record changes. They are **not durable browser storage**: save before reloading, closing the panel or ending the element's lifetime. Keep one authoritative writer per physical workspace; revisions do not provide locks against unrelated local processes.
+
+## Discover literature and connections
+
+**Discover** defaults to local search. Public Crossref/OpenAlex lookup is optional and requires an explicit disclosure checkbox plus a search/citation-neighborhood action. Only the query or selected work identity is sent—not PDFs, annotations or manuscripts—but the provider receives your IP address and applies its own policies. There are no reference-manager credentials, private APIs, automatic full-text acquisition or model calls. Authentication/rate-limit policy can change; failures are shown and standard bibliography import remains available.
+
+Select returned metadata before import. Existing DOI/exact-identity matches, including trash, are kept unchanged. Imported provenance identifies the provider; it is not verification of paper text, claims, citation counts or access rights. Open-access links open externally and do not automatically download a PDF.
+
+OpenAlex reference/citing-work neighborhoods are provider-reported citation relationships. **Local connections** are different: shared author/tag metadata or co-occurrence in model claims, labeled accordingly, not inferred citations or support judgments. The bounded view contains up to 100 references/500 connections; its diagram shows the first 40 and a textual table provides accessible detail. Saved searches are local recipes; selecting one fills the form but never runs it or grants disclosure consent. There are no automatic alerts or schedules.
 
 ## Pi research tools
 
-Install the **whole Pi package** on the target machine, not just a plugin symlink. The package declares `dist/companion.js`; trust/enable it and use `/reload` in existing idle sessions. `/research-library` reports source/tool availability.
+Install the **whole Pi package** on the target machine, not just a plugin symlink. The package declares `dist/companion.js`; trust/enable it and use `/reload` in existing idle sessions. `/research-library` reports catalog/tool availability. These six tools are registered even in ordinary Pi sessions without PI WEB:
 
-A valid pilot enables:
+- `research_library_native_catalog_search`: local metadata summaries and pagination.
+- `research_library_native_read_passage`: one verified indexed PDF page.
+- `research_library_native_search_text`: bounded indexed-text search in an explicit corpus.
+- `research_library_native_get_evidence`: selected saved evidence and immutable anchors.
+- `research_library_native_resolve_citations`: exact key/alias resolution without invented matches.
+- `research_library_native_submit_result`: hosted, session-local structured-result submission with durable backend acknowledgment; not arbitrary file writing or human acceptance.
 
-- `research_library_list_papers`: bounded manifest metadata and annotation counts.
-- `research_library_list_annotations`: bounded, filterable annotation summaries.
-- `research_library_get_annotation`: one complete validated annotation and paper context.
+Read tools do not create missing catalogs/indexes or fetch network content. Their results are capped at 64KiB and can reach the model provider. The submit tool fails visibly without a matching admitted task/backend; it never falls back to writing a result JSON file itself. There are no pilot tools, synthetic token tools or alternate discovery modes.
 
-These tools do not insert prompts, fetch documents, publish answer drafts for real papers, or mark an answer accepted. They still return research content to the agent, which may transmit it to its configured provider. Viewing/marking alone does not call a model. Ordinary Pi tools retain their own account-level permissions; this companion is not a sandbox.
+## Greenfield cutover
 
-The historical synthetic fixture at `.pi-web/research-library.synthetic.json` and its token/claim/draft tools remain an explicitly synthetic-only demonstration. An example ships as `dist/browser/example.synthetic.json`. If both the synthetic fixture and pilot manifest exist, the integration refuses the ambiguous source. Never put real research into the synthetic flow to bypass this boundary.
+The earlier standalone **Research** panel, pilot/synthetic loaders, annotation/question routes, old companion tools and shipped demo have been removed. The native catalog format and its existing IDs remain unchanged. **BibTeX, RIS and CSL-JSON remain supported interchange formats**, not retired formats.
 
-## Cut over from the fork
+This source checkout contained no workspace catalog, pilot records or source PDFs at cutover, so no research-data conversion was needed or performed. The uncommitted implementation was backed up before cleanup. Synthetic fixtures remain solely in tests; they are not a second product mode. Earlier implementation/review evidence is [archived](history/pre-greenfield-verification.md), not proof of the cleaned package.
 
-1. Back up the manifest and `.pi-web/research-library-runtime/`, including recovery files. Preserve the originals.
-2. When authorized and safe, stop the old research writer. Do not run old and new writers against the same workspace.
-3. Use a host built from the [supported source](development.md). Install this built package through **Settings → Pi packages** on the selected target machine. Ensure only one installed plugin owns id `research-library` and only one research companion is enabled.
-4. Enable Research Library in **Settings → PI WEB plugins**. From outside hosted work, manually restart the target session daemon, then reload the browser. A restart interrupts active sessions and terminals. Existing idle conversations need `/reload` to load the companion.
-5. Confirm the existing papers and annotations are present, then test a new annotation and a read tool before retiring the fork.
+If another workspace has historical data, this version neither loads nor deletes it. Before deploying there:
 
-No automatic schema conversion, path relocation, daemon restart, plugin enablement or backup migration is performed. Existing pilot JSON paths and identities are retained. Keep research PDFs, notes and runtime records out of Git and npm artifacts.
+1. Back up `raw/_processed/research-library-pilot/library.json`, `.pi-web/research-library-runtime/` (including `.deleted` recovery records), `.pi-web/research-library.synthetic.json` if present, source PDFs/notes, and the old plugin's private `questions/` receipts. Stop the old writer when safe; inspect any still-running Sessions. Do not run both versions against the same workspace.
+2. Treat conversion as a separately scoped migration. Do not rename an old manifest to `library.json`: its schema, IDs, anchors and conversation receipts differ. Convert reference metadata to a supported bibliography format and explicitly import it; admit unchanged local PDFs through Library. Review/recreate evidence with its original provenance rather than implying old answers or receipts are accepted catalog tasks. Preserve originals until that migration has been tested and verified. No converter is bundled here.
+3. Install the built package through the target machine's **Settings → Pi packages**, with only one plugin owning id `research-library` and one companion enabled. Use the [supported published host](development.md).
+4. When explicitly authorized and safe, manually restart the target session daemon **from outside hosted work**, then reload the browser. Restarting interrupts active sessions and terminals. Existing idle conversations need `/reload` to replace old companion tools. No restart, enablement or deployment is automatic.
 
-The plugin is machine-specific. Install it and its companion on each target and use matching gateway/target host versions. Data is not copied or failed over between machines. The implementation uses host-scoped peer/file helpers, but real remote federation remains an unverified deployment path; see [verification](verification.md).
+The plugin is machine-specific. Install it and its companion on each target and use matching gateway/target host versions. Data is not copied or failed over between machines. An isolated local real-host load has been tested; managed-service deployment, provider-backed result delivery and remote federation remain unverified. See [verification](verification.md).

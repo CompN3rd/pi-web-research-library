@@ -11,7 +11,7 @@ afterEach(async () => {
 });
 
 describe("installed-shape research-library extension discovery", () => {
-  it("loads the companion entry without discovering its helper modules", async () => {
+  it("loads exactly the six catalog tools without source discovery or helper extensions", async () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-web-extension-loader-"));
     tempDirs.push(agentDir);
 
@@ -21,6 +21,9 @@ describe("installed-shape research-library extension discovery", () => {
     const researchExtension = result.extensions.find((extension) => extension.resolvedPath.endsWith("companion.ts"));
     expect(researchExtension).toBeDefined();
     expect(researchExtension?.commands.has("research-library")).toBe(true);
+    expect([...(researchExtension?.tools.keys() ?? [])].sort()).toEqual(["catalog_search", "get_evidence", "read_passage", "resolve_citations", "search_text", "submit_result"].map(name => `research_library_native_${name}`));
+    expect(researchExtension?.handlers.has("session_start")).toBe(false);
+    expect(researchExtension?.handlers.has("session_shutdown")).toBe(true);
     expect(result.extensions).toHaveLength(1);
   });
 });

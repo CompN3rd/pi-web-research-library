@@ -1,6 +1,5 @@
 node_modules/
 dist/
-.host-package/
 *.tgz
 coverage/
 .smoke/

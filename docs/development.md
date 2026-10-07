@@ -2,28 +2,22 @@
 
 ## Supported development target
 
-Build against **`jmfederico/pi-web@60a29acbfc710908e73b0df9857cb63b53b672d3`**, browser API **v4**, server API **v3**, with Pi **^0.85.1**. The pinned host still declares version `1.202609.0`; its npm registry artifact predates this plugin contract. Some upstream examples instead declare `2.202609.0`. Neither string is sufficient evidence of compatibility. A published-host range must be selected and verified before an npm release of this package.
+Build against published **`@jmfederico/pi-web@1.202609.1`**, browser API **v4**, server API **v3**, and native Pi **0.87.1**. The release exports `pi-web.host/pi-sessions@1` (initial-prompt admission/completion) and `pi-session-events@1` (session-local ephemeral messaging). Native structured-result publication requires both. The API integers did not change from the earlier source target; the published artifact now supplies the needed public contract. Older registry `1.202609.0` is not a substitute. Local real-host cold-start loading has been tested in an isolated instance. Other host versions, managed-service deployment and provider-backed result delivery remain subject to the [verification gaps](verification.md).
 
-This repository has no PI WEB CLI, web server, session daemon, or private host API dependency. Its `.host-package/pi-web.tgz` development dependency is an ignored artifact built from that exact source. Runtime entrypoint imports are Node built-ins and the companion's native `typebox` / Pi AI `StringEnum` peers. PI WEB imports and Pi coding-agent imports are type-only; the enum helper produces provider-compatible tool schemas.
+The exact host and Pi development versions are pinned in `package.json` and `package-lock.json`. PI WEB is a development-only type dependency; no PI WEB CLI, web server, session daemon, or private host module is shipped. Citation.js, TypeBox support, Lit and unpdf are build-time dependencies bundled into the relevant entries; citeproc-js is copied unchanged to a separate package-local CommonJS module. Users do not need this project's devDependencies at runtime. Imports outside the package are Node built-ins and the companion's native Pi AI `StringEnum` helper. Structural public capability tokens are checked against published exports without a runtime PI WEB import. Third-party licenses and versions are retained under `dist/licenses/`; browser PDF.js assets retain their own licenses.
 
 ## Bootstrap
 
-Run from this repository using Bash (or equivalent PowerShell commands), against a **separate build checkout**, never an installed live host:
+Run from this repository using Node.js 22.19+:
 
 ```sh
-mkdir -p .host-package
-git clone https://github.com/jmfederico/pi-web.git ../pi-web-research-host-build
-git -C ../pi-web-research-host-build checkout --detach 60a29acbfc710908e73b0df9857cb63b53b672d3
-(cd ../pi-web-research-host-build && npm ci && npm run build && npm pack)
-cp ../pi-web-research-host-build/jmfederico-pi-web-1.202609.0.tgz .host-package/pi-web.tgz
-node scripts/refresh-host-integrity.mjs
 npm ci
 npm run verify
 ```
 
-The hash refresh updates only the local host artifact's lockfile integrity, not its source identity. Platform builds need not be byte-identical. Run it only after verifying the source SHA; do not substitute the registry tarball. Existing sibling `pi-web-upstream-plugins` builds can supply this artifact after the same revision check. No host rebuild is needed for subsequent plugin edits. Keep the host build checkout **outside** the local plugin directory: host discovery counts ignored files too (except `.git` and `node_modules`), so a nested host source/build can exceed its 4,096-entry / 16 MiB package limit. Git ignore rules alone do not hide files from plugin discovery.
+No source-built host tarball, sibling checkout, or live installation change is needed. Keep any independent host build checkout outside an installed plugin directory: discovery counts ignored files too (except `.git` and `node_modules`), so a nested checkout can exceed the host's 4,096-entry / 16 MiB package limit.
 
-The CI workflow builds that pinned host before installing this package's development dependencies. Build tools are dev dependencies; the package's compiled browser modules, PDF assets, server entry and companion are all included by `npm pack`. A bare source Git install is **not** a prebuilt distribution: build first and install the local directory or a packed tarball. No npm release workflow is configured or invoked here.
+The CI workflow installs the pinned registry dependencies directly. Build tools are dev dependencies; the package's compiled browser modules, PDF assets, server entry, companion and isolated `pdf-text-worker.js` are all included by `npm pack`. A bare source Git install is **not** a prebuilt distribution: build first and install the local directory or a packed tarball. No npm release workflow is configured or invoked here.
 
 ## Commands
 
@@ -37,7 +31,13 @@ npm run pack:validate
 npm run verify
 ```
 
-`verify` runs all of those checks. `pack:validate` creates and inspects a real tarball in a temporary directory, then removes it. Distribution checks verify entries, public import boundaries, PDF assets, publication allowlists and host size limits. Tests use temporary research fixtures and do not touch live state.
+`verify` runs all of those checks. `pack:validate` creates, inspects and safely extracts a real tarball in a temporary directory, then runs its server, bibliography/CSL engine and actual PDF-text worker outside the repository with no installed devDependencies or network calls. The temporary files are removed afterward. Distribution checks verify native tool discovery, source/license identity, public import boundaries, required assets, publication allowlists and host size limits. Tests use temporary research fixtures and do not touch live state.
+
+## Third-party source and notices
+
+The project's MIT license does not replace dependencies' licenses. citeproc-js 2.4.63 is used under its **CPAL-1.0** option. `dist/vendor/citeproc.cjs` is byte-identical upstream source, not a transformed mixed-license bundle. Every panel displays its required Frank Bennett / Citation Style Language attribution and module-relative links to the distributed source and complete CPAL license. Version/source provenance and integration notes live under `dist/licenses/citeproc/`; the pinned license input is under `third-party/citeproc/` in this repository. Other bundled dependencies' notices and declared metadata are retained in `dist/licenses/`. Recheck rights, source availability and attribution before a release or dependency change; automated checks are not a legal certification.
+
+## Browser verification
 
 For a real-browser package smoke test:
 
@@ -48,6 +48,6 @@ npm run smoke:browser
 RESEARCH_BROWSER_CHANNEL=msedge npm run smoke:browser
 ```
 
-The browser smoke uses a generated 12 MiB PDF, compiled plugin entries and an ephemeral loopback **test transport adapter**, not a PI WEB daemon. It exercises nested asset URLs, the actual PDF.js worker/canvas, selection coordinates, reload persistence and conflicting edits from two tabs. Screenshots stay in ignored `.smoke/`. It does not prove host catalog discovery, remote federation, or service installation.
+The browser smoke uses a generated 12 MiB PDF, compiled plugin entries and an ephemeral loopback **test transport adapter**, not a PI WEB daemon. It exercises compiled browser/server seams, nested assets and the actual PDF.js worker/canvas. An additional three-page authored fixture checks selectable text geometry, reader Find/highlights, page/width fit, keyboard navigation, modal focus restoration, rapid zoom cancellation, page tones and a 390px layout at device-pixel ratio 2. Library/Discover workflow checks use only synthetic fixtures and fake public session/event capabilities; they make no model-provider calls. No legacy source probes or demo asset are shipped. See the exact checks and current outcomes in [verification](verification.md). Screenshots stay in ignored `.smoke/`. It does not prove host catalog discovery, remote federation, or service installation.
 
 Any full-host smoke must use distinct `PI_WEB_DATA_DIR`, daemon endpoint and web port. Never inherit the live `PI_WEB_*` state into a second instance. Server entry changes require a manual restart of that test daemon; UI reload or Pi `/reload` alone does not activate them.

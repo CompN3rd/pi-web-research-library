@@ -1,7 +1,7 @@
 {
   "name": "@compn3rd/pi-web-research-library",
   "version": "0.1.0",
-  "description": "Local research papers, PDF annotations and bounded Pi tools for PI WEB.",
+  "description": "Native references, PDF evidence, agent research and citation-aware manuscripts for PI WEB.",
   "license": "MIT",
   "author": "Marc Kassubeck",
   "type": "module",
@@ -27,9 +27,13 @@
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.1",
-    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@citation-js/core": "0.9.0",
+    "@citation-js/plugin-bibtex": "0.9.0",
+    "@citation-js/plugin-csl": "0.9.0",
+    "@citation-js/plugin-ris": "0.9.0",
+    "@earendil-works/pi-coding-agent": "0.87.1",
     "@eslint/js": "^10.0.1",
-    "@jmfederico/pi-web": "file:.host-package/pi-web.tgz",
+    "@jmfederico/pi-web": "1.202609.1",
     "@types/node": "^24.13.3",
     "esbuild": "^0.28.2",
     "eslint": "^10.6.0",
@@ -40,6 +44,7 @@
     "playwright": "^1.63.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.63.0",
+    "unpdf": "1.8.1",
     "vitest": "^4.1.10"
   },
   "peerDependencies": {

@@ -1,6 +1,6 @@
 import type { PluginPeer } from "@jmfederico/pi-web/plugin-api";
-import { MAX_RESEARCH_LIBRARY_PILOT_PDF_BYTES } from "../domain/pilot.js";
-import { boundedString, integer, PDF_CHUNK_BYTES, record, type PaperScope } from "../domain/protocol.js";
+import { LIBRARY_MAX_PDF_BYTES } from "../domain/workbench.js";
+import { boundedString, integer, PDF_CHUNK_BYTES, record } from "../domain/protocol.js";
 import { researchRequest } from "./peerClient.js";
 
 export interface PdfRangeTransport {
@@ -11,13 +11,19 @@ export interface PdfRangeTransport {
 export interface RangeModule {
   PDFDataRangeTransport?: new (length: number, initialData: Uint8Array, progressiveDone: boolean) => PdfRangeTransport;
 }
-export interface PdfPeerSource { peer: PluginPeer; scope: PaperScope }
+export interface PdfPeerSource {
+  peer: PluginPeer;
+  referenceId: string;
+  documentId: string;
+  expectedSha256: string;
+}
 
 /** PDF.js pulls bounded chunks; no whole-document fetch or private URL is used. */
 export async function openPdfRange(module: RangeModule, source: PdfPeerSource, signal: AbortSignal, fail: (error: unknown) => void) {
   const Transport = module.PDFDataRangeTransport;
   if (Transport === undefined) throw new Error("PDF.js range transport is unavailable");
-  const info = record(await researchRequest(source.peer, "pdf.open", { scope: source.scope }, signal), ["id", "size", "sha256", "chunkBytes"]);
+  const { referenceId, documentId, expectedSha256 } = source;
+  const info = record(await researchRequest(source.peer, "library.pdf.open", { referenceId, documentId }, signal), ["id", "size", "sha256", "chunkBytes"]);
   const id = boundedString(info["id"], /^[a-f0-9-]{36}$/u);
   let closed = false;
   let queued = 0;
@@ -34,8 +40,8 @@ export async function openPdfRange(module: RangeModule, source: PdfPeerSource, s
   let size: number;
   let transport: PdfRangeTransport;
   try {
-    size = integer(info["size"], 5, MAX_RESEARCH_LIBRARY_PILOT_PDF_BYTES);
-    if (info["sha256"] !== source.scope.pdfSha256 || info["chunkBytes"] !== PDF_CHUNK_BYTES) throw new Error("Invalid PDF reader metadata");
+    size = integer(info["size"], 5, LIBRARY_MAX_PDF_BYTES);
+    if (info["sha256"] !== expectedSha256 || info["chunkBytes"] !== PDF_CHUNK_BYTES) throw new Error("Invalid PDF reader metadata");
     transport = new Transport(size, new Uint8Array(), true);
   } catch (error) { abort(); throw error; }
   signal.addEventListener("abort", abort, { once: true });

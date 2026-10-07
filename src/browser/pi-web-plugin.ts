@@ -1,34 +1,35 @@
 import type { PiWebPlugin } from "@jmfederico/pi-web/plugin-api";
-import { clearResearchLibraryFixtureCache, refreshResearchLibrarySource, researchLibraryPanelVisible } from "./fixtureCache.js";
 import { defineResearchLibraryPdfViewerElement } from "./pdfViewerElement.js";
-import { defineResearchLibraryPanelElement } from "./researchLibraryPanelElement.js";
+import { defineLibraryWorkbenchElement } from "./workbenchElement.js";
+import { defineLibraryDiscoveryElement } from "./discoveryElement.js";
 
 const plugin: PiWebPlugin = {
   apiVersion: 4,
-  name: "Research Library (Synthetic + Read-only Pilot)",
+  name: "Research Library",
   activate: ({ html, svg }) => {
     defineResearchLibraryPdfViewerElement();
-    defineResearchLibraryPanelElement();
+    defineLibraryWorkbenchElement();
+    defineLibraryDiscoveryElement();
+    // citeproc-js CPAL Exhibit B attribution applies to the larger work as well.
+    // Source/license links stay within the published browserRoot, not host internals.
+    const attribution = html`<p style="font:inherit;color:var(--pi-text);padding:.5rem;border-bottom:1px solid var(--pi-border)">(c) Frank Bennett · <a href="https://citationstyles.org/" target="_blank" rel="noopener noreferrer">citeproc-js implements the Citation Style Language</a> · <a href=${new URL("./licenses/citeproc/source.txt", import.meta.url).href} download>CSL engine source</a> · <a href=${new URL("./licenses/citeproc/CPAL-1.0.txt", import.meta.url).href} download>CPAL license</a></p>`;
 
     return {
-      dispose: () => { clearResearchLibraryFixtureCache(); },
       contributions: {
         workspacePanels: [
           {
-            id: "workspace.research-library",
-            title: "Research",
-            icon: svg`
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v17H6.5A2.5 2.5 0 0 0 4 22z"></path>
-                <path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v17h4.5A2.5 2.5 0 0 1 20 22z"></path>
-                <path d="m16 8 1 1 2-2"></path>
-              </svg>
-            `,
-            order: 60,
-            invalidationResources: ["workspace.files"],
-            onInvalidate: async (context) => { await refreshResearchLibrarySource(context); },
-            visible: (context) => researchLibraryPanelVisible(context),
-            render: (context) => html`<pi-web-research-library-panel .context=${context}></pi-web-research-library-panel>`,
+            id: "workspace.research-library.native",
+            title: "Library",
+            icon: svg`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h5v16H4zM10 4h5v16h-5zM16 5l4-1 3 15-4 1z"></path></svg>`,
+            order: 55,
+            render: context => html`${attribution}<pi-web-library-workbench .context=${context}></pi-web-library-workbench>`,
+          },
+          {
+            id: "workspace.research-library.discovery",
+            title: "Discover",
+            icon: svg`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="6"></circle><path d="m15 15 6 6"></path></svg>`,
+            order: 56,
+            render: context => html`${attribution}<pi-web-library-discovery .context=${context}></pi-web-library-discovery>`,
           },
         ],
       },

@@ -1,1 +1,3 @@
 * text=auto eol=lf
+# Preserve checksum-verified upstream license bytes, including its final blank line.
+third-party/citeproc/CPAL-1.0.txt -text whitespace=-blank-at-eof

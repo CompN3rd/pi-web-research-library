@@ -1,0 +1,25 @@
+citeproc-js 2.4.63
+Copyright (c) 2009-2019 Frank Bennett
+
+citeproc-js implements the Citation Style Language
+https://citationstyles.org/
+
+Research Library uses the CPAL-1.0 option offered by citeproc-js. The upstream
+source and its original dual-license notice are unchanged. This component is
+not relicensed under the Research Library project's MIT license.
+
+2026-09-26 distribution integration: the original citeproc_commonjs.js is copied
+byte-for-byte to dist/vendor/citeproc.cjs (runtime) and to
+ dist/browser/licenses/citeproc/source.txt (public source download).
+No source modifications, compilation or minification are applied to this
+component. The application references it as a separate CommonJS module.
+The complete CPAL license, including Exhibits A and B, is retained here and in
+the browser asset directory. Every Research Library panel displays the required
+attribution and links to the locally distributed source and license.
+
+The corresponding upstream revision and license checksum are recorded in
+provenance.json, resolved from the published npm 2.4.63 gitHead. Upstream source:
+https://github.com/Juris-M/citeproc-js/tree/73bc1b44bc7d54d0bfec4e070fd27f5efe024ff9
+
+Review license and source/attribution requirements before changing this component
+or releasing a new distribution. No legal compatibility certification is claimed.

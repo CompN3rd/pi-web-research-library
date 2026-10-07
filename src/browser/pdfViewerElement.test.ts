@@ -5,6 +5,7 @@ import {
   defineResearchLibraryPdfViewerElement,
   researchPdfAnnotationEventName,
   researchPdfSelectionEventName,
+  researchPdfReadyEventName,
   type ResearchPdfSelectionDetail,
   MAX_PDF_RENDER_DIMENSION,
   MAX_PDF_RENDER_PIXELS,
@@ -37,6 +38,9 @@ describe("ResearchLibraryPdfViewerElement", () => {
     expect(loadInput).toMatchObject({ isEvalSupported: false, enableXfa: false, disableAutoFetch: false, disableStream: false, maxImageSize: MAX_PDF_RENDER_PIXELS });
     expect(harness.workerOptions.workerSrc).toContain("/pdfjs/pdf.worker.min.mjs");
     expect(pageAt(harness.pages, 0).render).toHaveBeenCalledTimes(1);
+    harness.loadingTask.onProgress({ loaded: 10, total: 100 });
+    expect(shadow(element, "[data-status]", HTMLElement).dataset["state"]).toBe("ready");
+    expect(shadowButton(element, "[data-mark]").disabled).toBe(false);
 
     shadowButton(element, "[data-previous]").click();
     expect(harness.document.getPage).toHaveBeenCalledTimes(1);
@@ -60,6 +64,56 @@ describe("ResearchLibraryPdfViewerElement", () => {
     expect(shadow(element, "canvas", HTMLCanvasElement).getAttribute("aria-label")).toContain("page 2 of 2");
   });
 
+  it("announces a rendered source so a pending evidence backlink can select its page", async () => {
+    const harness = fakePdfJs(3);
+    const element = createViewer(); element.pdfJsLoader = harness.loader;
+    const ready = vi.fn((event: Event) => {
+      expect(event).toBeInstanceOf(CustomEvent);
+      if (event instanceof CustomEvent) expect(event.detail).toEqual({ sourceUrl: "paper.pdf", pageCount: 3 });
+      element.showPage(3);
+    });
+    element.addEventListener(researchPdfReadyEventName, ready);
+    document.body.append(element); element.sourceUrl = "paper.pdf";
+    await statusIncludes(element, "Page 3 of 3");
+    expect(ready).toHaveBeenCalledTimes(1);
+    element.showPage(2); await statusIncludes(element, "Page 2 of 3");
+    expect(ready).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets a zoom supersede the first render without destroying the document or losing its ready event", async () => {
+    const harness = fakePdfJs(1);
+    let reject!: (error: Error) => void;
+    const promise = new Promise<void>((_, fail) => { reject = fail; });
+    pageAt(harness.pages, 0).render.mockImplementationOnce(() => ({ promise, cancel: vi.fn(() => { const error = new Error("Superseded"); error.name = "RenderingCancelledException"; reject(error); }) }));
+    const element = createViewer(); element.pdfJsLoader = harness.loader;
+    const ready = vi.fn(); element.addEventListener(researchPdfReadyEventName, ready);
+    document.body.append(element); element.sourceUrl = "paper.pdf";
+    await waitFor(() => pageAt(harness.pages, 0).render.mock.calls.length === 1);
+    shadowButton(element, "[data-zoom-in]").click();
+    await statusIncludes(element, "Page 1 of 1 · 125%"); await settle();
+    expect(harness.loadingTask.destroy).not.toHaveBeenCalled();
+    expect(ready).toHaveBeenCalledOnce();
+    expect(pageAt(harness.pages, 0).cleanup).not.toHaveBeenCalled();
+  });
+
+  it("jumps by page number, rejects invalid input, and reloads without losing page or zoom", async () => {
+    const harness = fakePdfJs(3);
+    const element = createViewer(); element.pdfJsLoader = harness.loader;
+    document.body.append(element); element.sourceUrl = "paper.pdf";
+    await statusIncludes(element, "Page 1 of 3");
+    const input = shadow(element, "[data-page-number]", HTMLInputElement);
+    input.value = "3"; input.dispatchEvent(new Event("change"));
+    await statusIncludes(element, "Page 3 of 3");
+    input.value = "1.5"; input.dispatchEvent(new Event("change"));
+    expect(input.value).toBe("3");
+    element.showPage(NaN); await settle(); expect(element.currentPage).toBe(3);
+    shadowButton(element, "[data-zoom-in]").click(); await statusIncludes(element, "125%");
+    shadowButton(element, "[data-reload]").click();
+    await waitFor(() => harness.getDocument.mock.calls.length === 2);
+    await statusIncludes(element, "Page 3 of 3 · 125%");
+    expect(harness.loadingTask.destroy).toHaveBeenCalledOnce();
+  });
+
   it("does not load while detached and reloads a retained source after reconnect", async () => {
     const harness = fakePdfJs(1);
     const element = createViewer();
@@ -73,7 +127,7 @@ describe("ResearchLibraryPdfViewerElement", () => {
     await statusIncludes(element, "Page 1 of 1");
     expect(harness.loader).toHaveBeenCalledTimes(1);
     element.remove();
-    await waitFor(() => harness.document.destroy.mock.calls.length === 1);
+    await waitFor(() => harness.loadingTask.destroy.mock.calls.length === 1);
     document.body.append(element);
     await statusIncludes(element, "Page 1 of 1");
     expect(harness.loader).toHaveBeenCalledTimes(2);
@@ -91,12 +145,12 @@ describe("ResearchLibraryPdfViewerElement", () => {
 
     element.sourceUrl = "second.pdf";
     await statusIncludes(element, "Page 1 of 1");
-    expect(first.document.destroy).toHaveBeenCalled();
+    expect(first.loadingTask.destroy).toHaveBeenCalled();
     expect(pageAt(first.pages, 0).cleanup).toHaveBeenCalled();
 
     element.remove();
     await settle();
-    expect(second.document.destroy).toHaveBeenCalled();
+    expect(second.loadingTask.destroy).toHaveBeenCalled();
   });
 
   it("cancels an in-flight render when the source is cleared", async () => {
@@ -181,6 +235,129 @@ describe("ResearchLibraryPdfViewerElement", () => {
   });
 });
 
+describe("reading controls", () => {
+  it("keeps secondary actions in a disclosure and supports fit, tone and marker visibility", async () => {
+    const harness = fakePdfJs(2); const element = createViewer(); element.pdfJsLoader = harness.loader;
+    document.body.append(element); element.sourceUrl = "paper.pdf"; await statusIncludes(element, "Page 1 of 2");
+    expect(shadow(element, "[data-more]", HTMLDetailsElement).open).toBe(false);
+    expect(shadow(element, "[data-fit]", HTMLSelectElement).value).toBe("width");
+    const fit = shadow(element, "[data-fit]", HTMLSelectElement);
+    fit.value = "page"; fit.dispatchEvent(new Event("change")); await settle();
+    expect(fit.value).toBe("page");
+    fit.value = "1.5"; fit.dispatchEvent(new Event("change")); await statusIncludes(element, "150%");
+    const tone = shadow(element, "[data-page-tone]", HTMLSelectElement);
+    tone.value = "warm"; tone.dispatchEvent(new Event("change"));
+    expect(shadow(element, "dialog", HTMLDialogElement).dataset["tone"]).toBe("warm");
+    element.annotations = [{ id: "ann", page: 1, rect: { x: .1, y: .1, width: .2, height: .2 }, kind: "note", status: "open", label: "Note" }];
+    shadow(element, "[data-markers]", HTMLInputElement).click();
+    expect(shadowRoot(element).querySelector("[data-annotation-id]")).toBeNull();
+    shadow(element, "[data-markers]", HTMLInputElement).click();
+    expect(shadowRoot(element).querySelector("[data-annotation-id]")).not.toBeNull();
+  });
+
+  it("navigates from the page keyboard, leaves editable controls alone and focuses page/find inputs", async () => {
+    const harness = fakePdfJs(3); const element = createViewer(); element.pdfJsLoader = harness.loader;
+    document.body.append(element); element.sourceUrl = "paper.pdf"; await statusIncludes(element, "Page 1 of 3");
+    const viewport = shadow(element, ".viewport", HTMLElement);
+    viewport.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    await statusIncludes(element, "Page 2 of 3");
+    const input = shadow(element, "[data-page-number]", HTMLInputElement);
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })); await settle();
+    expect(element.currentPage).toBe(2);
+    viewport.dispatchEvent(new KeyboardEvent("keydown", { key: "g", bubbles: true }));
+    expect(shadowRoot(element).activeElement).toBe(input);
+    viewport.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true, cancelable: true }));
+    expect(shadowRoot(element).activeElement).toBe(shadow(element, "[data-find-input]", HTMLInputElement));
+    expect(shadowButton(element, "[data-find-toggle]").getAttribute("aria-expanded")).toBe("true");
+    shadow(element, "[data-find-input]", HTMLInputElement).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(shadow(element, "[data-find-bar]", HTMLElement).hidden).toBe(true);
+    expect(shadowRoot(element).activeElement).toBe(shadowButton(element, "[data-find-toggle]"));
+  });
+
+  it("searches without an index, highlights selectable spans and wraps results across pages", async () => {
+    const harness = fakePdfJs(2); const element = createViewer(); element.pdfJsLoader = harness.loader;
+    addTextLayer(harness.module);
+    document.body.append(element); element.sourceUrl = "paper.pdf"; await statusIncludes(element, "Page 1 of 2"); await settle();
+    shadowButton(element, "[data-find-toggle]").click();
+    const input = shadow(element, "[data-find-input]", HTMLInputElement); input.value = "INSIDE the";
+    shadow(element, "[data-find-bar]", HTMLFormElement).dispatchEvent(new Event("submit", { cancelable: true }));
+    await waitFor(() => shadow(element, "[data-find-status]", HTMLElement).textContent.includes("1 of 2 matches")); await settle();
+    expect(shadow(element, "mark[data-current]", HTMLElement).textContent).toBe("Inside the");
+    shadowButton(element, "[data-find-next]").click(); await statusIncludes(element, "Page 2 of 2"); await settle();
+    expect(shadow(element, "[data-find-status]", HTMLElement).textContent).toContain("2 of 2 matches");
+    shadowButton(element, "[data-find-next]").click(); await statusIncludes(element, "Page 1 of 2");
+    shadowButton(element, "[data-find-previous]").click(); await statusIncludes(element, "Page 2 of 2");
+    input.value = "missing"; input.dispatchEvent(new Event("input"));
+    expect(shadowRoot(element).querySelector("mark")).toBeNull();
+    expect(shadowButton(element, "[data-find-next]").disabled).toBe(true);
+  });
+
+  it("cancels an obsolete search and does not publish its delayed results", async () => {
+    const harness = fakePdfJs(1); const element = createViewer(); element.pdfJsLoader = harness.loader;
+    document.body.append(element); element.sourceUrl = "paper.pdf"; await statusIncludes(element, "Page 1 of 1");
+    let resolve!: (content: { items: [] }) => void;
+    pageAt(harness.pages, 0).getTextContent.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    shadowButton(element, "[data-find-toggle]").click();
+    shadow(element, "[data-find-input]", HTMLInputElement).value = "Inside";
+    shadow(element, "[data-find-bar]", HTMLFormElement).dispatchEvent(new Event("submit", { cancelable: true }));
+    await settle(); shadowButton(element, "[data-find-close]").click(); resolve({ items: [] }); await settle();
+    expect(shadow(element, "[data-find-status]", HTMLElement).textContent).toBe("Search this PDF without creating an index.");
+    expect(shadowButton(element, "[data-find-next]").disabled).toBe(true);
+  });
+
+  it("discloses capped matches and stops before scanning the next page", async () => {
+    const harness = fakePdfJs(2); const element = createViewer(); element.pdfJsLoader = harness.loader;
+    pageAt(harness.pages, 0).getTextContent.mockResolvedValue({ items: [{ str: "match ".repeat(1001), transform: [1, 0, 0, 1, 0, 0], width: 1, height: 1 }] });
+    document.body.append(element); element.sourceUrl = "paper.pdf"; await statusIncludes(element, "Page 1 of 2");
+    shadow(element, "[data-find-input]", HTMLInputElement).value = "match";
+    shadow(element, "[data-find-bar]", HTMLFormElement).dispatchEvent(new Event("submit", { cancelable: true }));
+    await waitFor(() => shadow(element, "[data-find-status]", HTMLElement).textContent.includes("1000 matches"));
+    expect(shadow(element, "[data-find-status]", HTMLElement).textContent).toContain("Limited to 1 / 2 pages");
+    expect(pageAt(harness.pages, 1).getTextContent).not.toHaveBeenCalled();
+  });
+
+  it("does not publish an old text layer after source replacement", async () => {
+    const first = fakePdfJs(1); const second = fakePdfJs(1);
+    addTextLayer(first.module); addTextLayer(second.module);
+    let resolve!: (content: { items: [] }) => void;
+    pageAt(first.pages, 0).getTextContent.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const element = createViewer(); element.pdfJsLoader = first.loader;
+    document.body.append(element); element.sourceUrl = "first.pdf"; await statusIncludes(element, "Page 1 of 1");
+    element.pdfJsLoader = second.loader; element.sourceUrl = "second.pdf";
+    await waitFor(() => second.getDocument.mock.calls.length === 1);
+    await statusIncludes(element, "Page 1 of 1"); await settle();
+    resolve({ items: [] }); await settle();
+    expect(shadow(element, "[data-text-layer]", HTMLElement).textContent).toContain("Inside the region");
+    expect(shadow(element, "[data-text-status]", HTMLElement).textContent).toBe("");
+  });
+
+  it("reports text/search failures without losing the rendered page", async () => {
+    const harness = fakePdfJs(1); const element = createViewer(); element.pdfJsLoader = harness.loader; addTextLayer(harness.module);
+    pageAt(harness.pages, 0).getTextContent.mockRejectedValue(new Error("Synthetic text failure"));
+    document.body.append(element); element.sourceUrl = "paper.pdf"; await statusIncludes(element, "Page 1 of 1"); await settle();
+    expect(shadow(element, "[data-text-status]", HTMLElement).textContent).toContain("Text selection unavailable");
+    shadow(element, "[data-find-input]", HTMLInputElement).value = "query";
+    shadow(element, "[data-find-bar]", HTMLFormElement).dispatchEvent(new Event("submit", { cancelable: true }));
+    await settle(); expect(shadow(element, "[data-find-status]", HTMLElement).textContent).toContain("Results are incomplete");
+    expect(shadow(element, "[data-status]", HTMLElement).dataset["state"]).toBe("ready");
+  });
+});
+
+// Text-layer geometry is covered in Chromium; this fake proves selection/search DOM wiring.
+function addTextLayer(module: PdfJsModule): void {
+  module.TextLayer = class {
+    textDivs: HTMLElement[] = [];
+    textContentItemsStr: string[] = [];
+    constructor(private readonly input: { textContentSource: { items: { str?: unknown }[] }; container: HTMLElement }) {}
+    render(): Promise<void> {
+      this.textContentItemsStr = this.input.textContentSource.items.flatMap(item => typeof item.str === "string" ? [item.str] : []);
+      this.textDivs = this.textContentItemsStr.map(text => { const span = document.createElement("span"); span.textContent = text; this.input.container.append(span); return span; });
+      return Promise.resolve();
+    }
+    cancel(): void { /* Synchronous fake has no pending rendering work. */ }
+  };
+}
+
 describe("region marking", () => {
   it("reports a dragged region with the page text it covers", async () => {
     const harness = fakePdfJs(1);
@@ -198,6 +375,24 @@ describe("region marking", () => {
     await waitFor(() => selections.length === 1);
 
     expect(selections[0]).toEqual({ page: 1, rect: { x: 0.1, y: 0.1, width: 0.4, height: 0.1 }, quote: "Inside the region" });
+    expect(shadowButton(element, "[data-mark]").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("discards delayed quote extraction after page navigation and supports Escape to cancel marking", async () => {
+    const harness = fakePdfJs(2);
+    let finish!: (value: { items: [] }) => void;
+    pageAt(harness.pages, 0).getTextContent.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const element = createViewer(); element.pdfJsLoader = harness.loader;
+    document.body.append(element); element.sourceUrl = "paper.pdf";
+    await statusIncludes(element, "Page 1 of 2");
+    const selected = vi.fn(); element.addEventListener(researchPdfSelectionEventName, selected);
+    shadowButton(element, "[data-mark]").click();
+    dragRegion(element, { fromX: 60, fromY: 80, toX: 300, toY: 160 });
+    shadowButton(element, "[data-next]").click(); await statusIncludes(element, "Page 2 of 2");
+    finish({ items: [] }); await settle();
+    expect(selected).not.toHaveBeenCalled();
+    shadowButton(element, "[data-mark]").click();
+    shadowButton(element, "[data-mark]").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(shadowButton(element, "[data-mark]").getAttribute("aria-pressed")).toBe("false");
   });
 
@@ -324,13 +519,12 @@ function fakePdfJs(numPages: number, renderPromise: Promise<unknown> = Promise.r
       if (value === undefined) return Promise.reject(new Error("Page out of range"));
       return Promise.resolve(value);
     }),
-    destroy: vi.fn(() => Promise.resolve()),
   };
-  const loadingTask = { promise: Promise.resolve(document), destroy: vi.fn(() => Promise.resolve()) };
+  const loadingTask = { promise: Promise.resolve(document), destroy: vi.fn(() => Promise.resolve()), onProgress: vi.fn<(progress: { loaded: number; total: number }) => void>() };
   const workerOptions = { workerSrc: "" };
   const getDocument = vi.fn<PdfJsModule["getDocument"]>(() => loadingTask);
   const module: PdfJsModule = { GlobalWorkerOptions: workerOptions, getDocument };
-  return { pages, renderTasks, document, loadingTask, workerOptions, getDocument, loader: vi.fn(() => Promise.resolve(module)) };
+  return { pages, renderTasks, document, loadingTask, workerOptions, getDocument, module, loader: vi.fn(() => Promise.resolve(module)) };
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {

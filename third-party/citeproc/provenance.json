@@ -1,0 +1,8 @@
+{
+  "package": "citeproc",
+  "version": "2.4.63",
+  "licenseChoice": "CPAL-1.0",
+  "sourceCommit": "73bc1b44bc7d54d0bfec4e070fd27f5efe024ff9",
+  "licenseUrl": "https://raw.githubusercontent.com/Juris-M/citeproc-js/73bc1b44bc7d54d0bfec4e070fd27f5efe024ff9/CPAL",
+  "sha256": "a953615139d8c767eb5e95f14215bf5c356ea23397a15137f6e119babf3fe69b"
+}

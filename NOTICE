@@ -14,4 +14,20 @@ are retained in LICENSE. Standalone additions copyright (c) 2026 Marc Kassubeck.
 PDF.js is distributed under the Apache License 2.0. Its license is included
 with the built browser assets at dist/browser/pdfjs/LICENSE. Included CMaps,
 standard fonts, WASM and ICC assets retain their accompanying license files.
+Native bibliography conversion bundles Citation.js and its dependencies;
+notices and a version manifest are retained at dist/licenses/. The name/date
+helper packages omit separate license files; their published MIT declarations,
+author metadata and the Citation.js project MIT notice are retained explicitly.
+Embedded CSL styles/locales retain their own rights metadata.
+
+CSL citation processing uses citeproc-js 2.4.63, copyright (c) 2009-2019
+Frank Bennett, under its CPAL-1.0 option, not this project's MIT license.
+citeproc-js implements the Citation Style Language: https://citationstyles.org/
+The unmodified upstream source is distributed at dist/vendor/citeproc.cjs and
+at dist/browser/licenses/citeproc/source.txt. The complete CPAL license, source
+revision and integration notice are retained at dist/licenses/citeproc/;
+the browser attribution links to the source and license within browserRoot.
+No modification or minification is applied to the separately loaded engine.
+Server PDF text extraction bundles unpdf (MIT) and its embedded PDF.js parser
+(Apache License 2.0), independently of the browser renderer version.
 No research PDFs, source notes or user annotations are distributed.

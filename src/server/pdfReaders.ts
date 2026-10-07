@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, rm, unlink, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
-import { MAX_RESEARCH_LIBRARY_PILOT_PDF_BYTES } from "../domain/pilot.js";
-import { PDF_CHUNK_BYTES, PDF_IDLE_MS, PDF_MAX_READERS, type PaperScope } from "../domain/protocol.js";
+import { LIBRARY_MAX_PDF_BYTES } from "../domain/workbench.js";
+import { PDF_CHUNK_BYTES, PDF_IDLE_MS, PDF_MAX_READERS } from "../domain/protocol.js";
 import { openWorkspaceFile, readExactly } from "./files.js";
-import { resolvePaper } from "./library.js";
+
+export interface VerifiedPdfSource { path: string; size: number; sha256: string }
 
 interface Reader {
   scopeKey: string;
@@ -37,11 +38,12 @@ export class PdfReaders {
 
   private isStopped(): boolean { return this.stopped; }
 
-  open(root: string, authorityKey: string, scope: PaperScope, signal: AbortSignal) {
-    return this.track(this.openReader(root, authorityKey, scope, signal));
+  /** Metadata is resolved by the server catalog, never accepted directly from a peer. */
+  openDocument(root: string, authorityKey: string, source: VerifiedPdfSource, signal: AbortSignal) {
+    return this.track(this.openReader(root, authorityKey, source, signal));
   }
 
-  private async openReader(root: string, authorityKey: string, scope: PaperScope, signal: AbortSignal) {
+  private async openReader(root: string, authorityKey: string, pdf: VerifiedPdfSource, signal: AbortSignal) {
     signal.throwIfAborted();
     if (this.stopped || this.readers.size + this.pending >= PDF_MAX_READERS) throw new Error("PDF reader limit reached; close another reader or retry after its idle expiry");
     this.pending += 1;
@@ -50,12 +52,12 @@ export class PdfReaders {
     let snapshot: FileHandle | undefined;
     let admitted = false;
     try {
-      const paper = await resolvePaper(root, scope);
+      if (!Number.isSafeInteger(pdf.size) || pdf.size < 5 || pdf.size > LIBRARY_MAX_PDF_BYTES || !/^[a-f0-9]{64}$/u.test(pdf.sha256)) throw new Error("Invalid PDF source identity");
       signal.throwIfAborted();
-      const source = await openWorkspaceFile(root, paper.pdf.path, MAX_RESEARCH_LIBRARY_PILOT_PDF_BYTES);
+      const source = await openWorkspaceFile(root, pdf.path, LIBRARY_MAX_PDF_BYTES);
       try {
         const stat = await source.stat();
-        if (stat.size !== paper.pdf.size) throw new Error("PDF size does not match manifest");
+        if (stat.size !== pdf.size) throw new Error("PDF size does not match attachment");
         snapshot = await open(path, "wx+", 0o600);
         const hash = createHash("sha256");
         for (let offset = 0; offset < stat.size; offset += PDF_CHUNK_BYTES) {
@@ -65,12 +67,12 @@ export class PdfReaders {
           await snapshot.writeFile(bytes);
         }
         const after = await source.stat();
-        if (after.size !== stat.size || after.mtimeMs !== stat.mtimeMs || hash.digest("hex") !== scope.pdfSha256) throw new Error("PDF digest mismatch or source changed during verification");
+        if (after.size !== stat.size || after.mtimeMs !== stat.mtimeMs || hash.digest("hex") !== pdf.sha256) throw new Error("PDF digest mismatch or source changed during verification");
         signal.throwIfAborted();
         if (this.isStopped()) throw new Error("Research plugin stopped");
         this.readers.set(id, { scopeKey: authorityKey, handle: snapshot, path, size: stat.size, touchedAt: this.now(), reads: 0 });
         admitted = true;
-        return { id, size: stat.size, sha256: scope.pdfSha256, chunkBytes: PDF_CHUNK_BYTES };
+        return { id, size: stat.size, sha256: pdf.sha256, chunkBytes: PDF_CHUNK_BYTES };
       } finally {
         await source.close();
       }

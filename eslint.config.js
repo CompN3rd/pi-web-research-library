@@ -5,6 +5,7 @@ import tseslint from "typescript-eslint";
 
 export default defineConfig([
   {
+    // Coordinator plans are sandbox function bodies, not JavaScript modules.
     ignores: ["dist/**", "node_modules/**"],
   },
   {
