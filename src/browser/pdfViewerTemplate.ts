@@ -56,6 +56,7 @@ export function pdfViewerTemplate(): string {
       .marker, .marquee { position:absolute; box-sizing:border-box; padding:0; min-height:0; }
       .marquee { border:2px dashed var(--pi-accent, #58a6ff); background:#58a6ff33; }
       .marker { border:1px solid var(--pi-warning, #d29922); background:#d299221a; cursor:pointer; pointer-events:auto; }
+      .marker[data-kind=highlight] { border-color:#ad8500; background:#ffc40040; }
       .marker[data-kind=note] { border-color:var(--pi-purple, #a371d1); background:#d2a8ff26; }
       .marker[data-evidence-status=resolved] { border-style:dashed; opacity:.65; }
       .marker[data-active=true] { border:2px solid var(--pi-accent, #58a6ff); background:#58a6ff40; }
@@ -100,13 +101,13 @@ export function pdfViewerTemplate(): string {
       </form>
       <div class="mark-hint" id="mark-instructions" data-mark-hint hidden>Drag with mouse or touch. Or use arrows to move the region, Shift+arrows to resize, Enter to annotate. Esc cancels.<button type="button" data-mark-cancel>Cancel</button></div>
       <section id="text-tools" class="text-tools" data-text-tools hidden aria-label="Text annotation">
-        <p>Select text on this page, then <button type="button" data-text-comment>Comment on selection</button>. <button type="button" data-text-close>Close text tools</button></p>
+        <p>Save a highlight, with or without a comment. Select text on this page, then <button type="button" data-text-comment>Annotate selection</button>. <button type="button" data-text-close>Close text tools</button></p>
         <details data-passage-picker><summary>Choose passage with keyboard or touch</summary>
           <p>Choose the first and last text runs in PDF reading order (whole runs, one page). Review the quote before saving.</p>
           <label>Passage start<select data-text-start aria-label="Passage start"></select></label>
           <label>Passage end<select data-text-end aria-label="Passage end"></select></label>
           <blockquote data-text-preview></blockquote>
-          <button type="button" data-passage-comment>Comment on passage</button>
+          <button type="button" data-passage-comment>Annotate passage</button>
         </details>
         <p data-selection-status role="status" aria-live="polite"></p>
       </section>

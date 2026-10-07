@@ -530,7 +530,7 @@ describe("region marking", () => {
 
     element.annotations = [
       { id: "ann-1", page: 1, rect: { x: 0.1, y: 0.2, width: 0.3, height: 0.05 }, kind: "question", status: "open", label: "Why?" },
-      { id: "ann-2", page: 2, rect: { x: 0.1, y: 0.2, width: 0.3, height: 0.05 }, kind: "note", status: "resolved", label: "Later" },
+      { id: "ann-2", page: 2, rect: { x: 0.1, y: 0.2, width: 0.3, height: 0.05 }, kind: "highlight", status: "resolved", label: "Later" },
     ];
     element.activeAnnotationId = "ann-1";
 
@@ -550,6 +550,7 @@ describe("region marking", () => {
     shadowButton(element, "[data-next]").click();
     await statusIncludes(element, "Page 2 of 2");
     expect([...shadowRoot(element).querySelectorAll("[data-annotation-id]")].map((entry) => entry.getAttribute("data-annotation-id"))).toEqual(["ann-2"]);
+    expect(shadowRoot(element).querySelector("[data-annotation-id]")?.getAttribute("aria-label")).toBe("Highlight on page 2: Later");
   });
 
   it("jumps to a page on request and clamps out-of-range requests", async () => {

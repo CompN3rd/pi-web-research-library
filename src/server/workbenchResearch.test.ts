@@ -56,6 +56,18 @@ describe("native evidence", () => {
     await expect(f.call("evidence.list", {})).resolves.toMatchObject({ total: 0 });
     await expect(f.call("evidence.list", { trash: true, query: "Edited" })).resolves.toMatchObject({ total: 1 });
   });
+  it("persists quote-only highlights and preserves their anchors when comments change", async () => {
+    const f = setup(); const highlight = { ...evidenceInput, kind: "quote", body: "" };
+    await expect(f.call("evidence.save", highlight)).resolves.toMatchObject({ body: "", kind: "quote", revision: 1 });
+    await expect(f.call("evidence.list", {})).resolves.toMatchObject({ items: [expect.objectContaining({ quote: highlight.quote, body: "" })] });
+    await expect(f.call("evidence.save", highlight)).resolves.toMatchObject({ revision: 1 });
+    await expect(f.call("evidence.save", { ...highlight, expectedRevision: 1, body: "Added later" })).resolves.toMatchObject({ body: "Added later", quote: highlight.quote, rect: highlight.rect, pdfSha256: highlight.pdfSha256, revision: 2 });
+    await expect(f.call("evidence.save", { ...highlight, expectedRevision: 1, body: "Stale" })).rejects.toThrow("Stale");
+    await expect(f.call("evidence.save", { ...highlight, expectedRevision: 2, quote: "Changed" })).rejects.toThrow("immutable");
+    await expect(f.call("evidence.save", { ...highlight, expectedRevision: 2 })).resolves.toMatchObject({ body: "", quote: highlight.quote, rect: highlight.rect, revision: 3 });
+    await expect(f.call("evidence.save", { ...highlight, quote: " ", kind: "note" })).rejects.toThrow("Evidence must contain text");
+    await expect(f.call("evidence.save", { ...highlight, documentId: null, pdfSha256: null, page: null, rect: null, quote: "", kind: "note" })).rejects.toThrow("Evidence must contain text");
+  });
   it("allows honest unanchored notes and rejects malformed or mismatched anchors", async () => {
     const f = setup();
     for (const patch of [{ page: 0 }, { rect: { x: 0.9, y: 0, width: 0.3, height: 0.1 } }, { pdfSha256: "b".repeat(64) }, { extra: true }, { documentId: null }, { tags: ["x", "x"] }]) await expect(f.call("evidence.save", { ...evidenceInput, ...patch })).rejects.toThrow();

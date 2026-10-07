@@ -33,7 +33,7 @@ export interface ResearchPdfAnnotationMarker {
   id: string;
   page: number;
   rect: PdfRect;
-  kind: "question" | "note";
+  kind: "question" | "note" | "highlight";
   status: "open" | "resolved";
   label: string;
 }
@@ -969,7 +969,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
       element.dataset["evidenceStatus"] = marker.status;
       if (marker.id === this.activeMarkerId) element.dataset["active"] = "true";
       element.title = marker.label;
-      element.setAttribute("aria-label", `${marker.kind === "question" ? "Question" : "Note"} on page ${String(marker.page)}: ${marker.label}`);
+      element.setAttribute("aria-label", `${marker.kind === "question" ? "Question" : marker.kind === "highlight" ? "Highlight" : "Note"} on page ${String(marker.page)}: ${marker.label}`);
       applyRectStyle(element, marker.rect);
       return element;
     });

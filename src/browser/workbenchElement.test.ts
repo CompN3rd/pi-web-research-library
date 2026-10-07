@@ -191,6 +191,36 @@ describe("evidence and lifecycle safety", () => {
     await click(element, "Reader"); await click(element, "Discard evidence edits");
     expect(reader.hasAttribute("annotation-open")).toBe(false);
   });
+  it("saves a quote-only highlight and reopens it to add or remove a comment in Reader", async () => {
+    const host = workbenchHost();
+    host.overrides.set("evidence.save", payload => {
+      const saved = evidence({ ...payload, revision: Number(payload["expectedRevision"]) + 1, createdAt: now, updatedAt: now, deletedAt: null });
+      host.notes.splice(0, host.notes.length, saved); return saved;
+    });
+    const element = await mount(host); await click(element, "Synthetic paper"); await click(element, "Reader");
+    const markerSpy = vi.spyOn(ResearchLibraryPdfViewerElement.prototype, "annotations", "set");
+    const selection = { page: 3, rect: { x: .1, y: .2, width: .3, height: .1 }, quote: "Highlight this passage" };
+    viewer(element).dispatchEvent(new CustomEvent(researchPdfSelectionEventName, { detail: selection })); await element.updateComplete;
+    expect(control(element, "Evidence note / question").required).toBe(false);
+    expect(root(element).textContent).toContain("Comment optional");
+    await click(element, "Save evidence");
+    const first = host.payloads("evidence.save")[0];
+    expect(first).toMatchObject({ ...selection, body: "", kind: "quote", expectedRevision: 0 });
+    expect(markerSpy).toHaveBeenLastCalledWith([expect.objectContaining({ kind: "highlight", label: selection.quote })]);
+    await click(element, "Close annotation"); await click(element, `Page 3: ${selection.quote}`);
+    expect(control(element, "Evidence note / question").value).toBe("");
+    await input(element, "Evidence note / question", "Comment added later"); await click(element, "Save evidence");
+    expect(host.payloads("evidence.save")[1]).toEqual({ ...first, expectedRevision: 1, body: "Comment added later" });
+    expect(markerSpy).toHaveBeenLastCalledWith([expect.objectContaining({ kind: "note", label: "Comment added later" })]);
+    await input(element, "Evidence note / question", ""); await click(element, "Save evidence");
+    expect(host.payloads("evidence.save")[2]).toEqual({ ...first, expectedRevision: 2 });
+    await click(element, "Close annotation"); await click(element, "Evidence"); await click(element, "Edit evidence");
+    expect(control(element, "Evidence note / question").required).toBe(false);
+    await click(element, "New unanchored note");
+    expect(control(element, "Evidence note / question").required).toBe(true);
+    await click(element, "Save evidence");
+    expect(host.payloads("evidence.save")).toHaveLength(3);
+  });
   it("opens saved annotations from an in-reader chooser and protects a pending edit", async () => {
     const host = workbenchHost(); const saved = syntheticEvidence(); host.notes.push(saved);
     const element = await mount(host); await click(element, "Synthetic paper"); await click(element, "Reader");

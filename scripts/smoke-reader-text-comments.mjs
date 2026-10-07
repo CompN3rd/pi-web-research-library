@@ -40,7 +40,7 @@ export async function smokeReaderTextComments({ browser, url, errors }) {
         await page.mouse.move(box.x + 1, box.y + box.height / 2);
         await page.mouse.down(); await page.mouse.move(box.x + box.width - 1, box.y + box.height / 2, { steps: 20 }); await page.mouse.up();
         assert.equal(await page.evaluate(() => window.getSelection().toString()), "Synthetic research paper");
-        await activate(reader.getByRole("button", { name: "Comment on selection", exact: true }));
+        await activate(reader.getByRole("button", { name: "Annotate selection", exact: true }));
       } else {
         await activate(reader.locator("[data-passage-picker] > summary"));
         const start = reader.getByLabel("Passage start", { exact: true });
@@ -58,33 +58,46 @@ export async function smokeReaderTextComments({ browser, url, errors }) {
         }
         assert.equal(await reader.locator("[data-text-preview]").textContent(), "Synthetic research paper");
         await page.screenshot({ path: `.smoke/text-picker-${device.name}.png`, fullPage: true });
-        await activate(reader.getByRole("button", { name: "Comment on passage", exact: true }));
+        await activate(reader.getByRole("button", { name: "Annotate passage", exact: true }));
       }
       await editor.waitFor();
       const note = editor.getByLabel("Evidence note / question", { exact: true });
       assert(await note.evaluate(element => element.getRootNode().activeElement === element));
       const body = `Text comment with ${device.name}`;
-      await note.fill(body);
+      assert.equal(await note.inputValue(), "");
+      assert.equal(await note.getAttribute("required"), null);
       await activate(editor.getByRole("button", { name: "Save evidence", exact: true })); await idle();
       await editor.getByText("Saved", { exact: true }).waitFor();
-      const saved = await page.evaluate(async body => (await window.researchPeer.request("evidence.list", { version: 1, payload: {} })).items.find(item => item.body === body), body);
+      const saved = await page.evaluate(async () => (await window.researchPeer.request("evidence.list", { version: 1, payload: {} })).items.find(item => item.body === ""));
       assert(saved && saved.pdfSha256 && saved.page === 1 && saved.rect);
       assert.equal(saved.quote, "Synthetic research paper");
+      assert.equal(saved.body, "");
+      assert.equal(saved.kind, "quote");
       assert(Math.abs(saved.rect.x - .06) < .01 && saved.rect.y > .12 && saved.rect.y < .22, "Saved text anchor matches the source glyphs");
       assert(await reader.isVisible());
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "No horizontal overflow");
       await page.screenshot({ path: `.smoke/text-comment-${device.name}.png`, fullPage: true });
+      await activate(editor.getByRole("button", { name: "Close annotation", exact: true }));
+      assert.equal(await reader.locator(`[data-annotation-id="${saved.id}"]`).getAttribute("data-kind"), "highlight");
+      await page.screenshot({ path: `.smoke/text-highlight-${device.name}.png`, fullPage: true });
       await disposeSmokeReader(page, reader); await open();
+      await activate(panel.locator(".reader-annotations > summary"));
+      await activate(panel.getByRole("button", { name: `Page 1: ${saved.quote}`, exact: true })); await idle();
+      assert.equal(await note.inputValue(), "");
+      await note.fill(body);
+      await activate(editor.getByRole("button", { name: "Save evidence", exact: true })); await idle();
+      await activate(editor.getByRole("button", { name: "Close annotation", exact: true }));
       await activate(panel.locator(".reader-annotations > summary"));
       await activate(panel.getByRole("button", { name: `Page 1: ${body}`, exact: true })); await idle();
       assert.equal(await note.inputValue(), body);
       await note.fill(`${body}; edited`);
       await activate(editor.getByRole("button", { name: "Save evidence", exact: true })); await idle();
       const edited = await page.evaluate(async id => (await window.researchPeer.request("evidence.list", { version: 1, payload: {} })).items.find(item => item.id === id), saved.id);
-      assert.equal(edited.revision, saved.revision + 1);
+      assert.equal(edited.revision, saved.revision + 2);
+      assert.equal(edited.body, `${body}; edited`);
       for (const key of ["rect", "quote", "page", "documentId", "pdfSha256", "referenceId"]) assert.deepEqual(edited[key], saved[key]);
       await disposeSmokeReader(page, reader);
-      checks.push(`${device.name} ${device.viewport.width}x${device.viewport.height} DPR 2: selected-text comment save/reload/reopen/edit; exact quote and immutable source anchor`);
+      checks.push(`${device.name} ${device.viewport.width}x${device.viewport.height} DPR 2: quote-only highlight save/reload/reopen; add comment, reopen and edit; exact quote and immutable source anchor`);
     } catch (error) {
       await page.screenshot({ path: `.smoke/text-comment-${device.name}-failure.png`, fullPage: true }).catch(() => {});
       throw error;

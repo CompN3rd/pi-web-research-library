@@ -391,7 +391,7 @@ export class LibraryWorkbenchElement extends LitElement {
   }
   private updateMarkers(): void {
     if (this.viewer === null) return;
-    this.viewer.annotations = this.evidencePage.items.flatMap(item => item.documentId === this.activeDocument?.id && item.pdfSha256 === this.activeDocument.sha256 && item.rect !== null && item.page !== null && item.deletedAt === null ? [{ id: item.id, page: item.page, rect: item.rect, kind: item.kind === "question" ? "question" : "note", status: item.status, label: item.body || item.quote }] : []);
+    this.viewer.annotations = this.evidencePage.items.flatMap(item => item.documentId === this.activeDocument?.id && item.pdfSha256 === this.activeDocument.sha256 && item.rect !== null && item.page !== null && item.deletedAt === null ? [{ id: item.id, page: item.page, rect: item.rect, kind: item.kind === "question" ? "question" : item.kind === "quote" && item.body.trim() === "" ? "highlight" : "note", status: item.status, label: item.body || item.quote }] : []);
   }
   private markEvidence(selection?: ResearchPdfSelectionDetail): void {
     if (selection !== undefined && selection.quote.length > 16_000) { this.error = "The captured quote exceeds 16,000 characters. Mark a smaller region; quotes are never silently truncated."; this.requestUpdate(); return; }
@@ -449,7 +449,8 @@ export class LibraryWorkbenchElement extends LitElement {
     }); }}><fieldset ?disabled=${this.busy}>
       <h3>${d.expectedRevision === 0 ? "New evidence" : "Edit evidence"}</h3>
       <p class="muted">${d.page === null ? "Unanchored note — no PDF provenance claimed" : `Anchored to page ${String(d.page)}`}</p>
-      ${this.field("Evidence note / question", d.body, v => { d.body = v; this.drafts.evidenceDirty = true; }, { area: true, required: true, max: 16_000 })}
+      ${this.field("Evidence note / question", d.body, v => { d.body = v; this.drafts.evidenceDirty = true; }, { area: true, required: d.quote.trim() === "", max: 16_000 })}
+      ${d.quote.trim() !== "" ? html`<p class="muted">Comment optional: save now to keep the highlight, or add a comment. Reopen it from a marker or Saved annotations to edit later.</p>` : nothing}
       <div class="actions"><button class="primary" type="submit">Save evidence</button><span role="status">${this.drafts.evidenceDirty ? "Unsaved evidence" : "Saved"}</span></div>
       <details ?open=${!inReader}><summary>Quote, source & annotation details</summary>
         <label>Captured quote<textarea .value=${d.quote} readonly></textarea></label>
