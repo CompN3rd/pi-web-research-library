@@ -20,6 +20,7 @@ export const researchLibraryPdfViewerTagName = "pi-web-research-library-pdf-view
 export const researchPdfSelectionEventName = "research-pdf-region-selected";
 export const researchPdfAnnotationEventName = "research-pdf-annotation-activated";
 export const researchPdfReadyEventName = "research-pdf-ready";
+export const researchPdfPageEventName = "research-pdf-page";
 
 /** Smallest drag the viewer accepts, as a fraction of the page box. */
 const MIN_SELECTION_FRACTION = 0.01;
@@ -168,6 +169,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
   private generation = 0;
   private renderGeneration = 0;
   private readyGeneration = -1;
+  private announcedPage = 0;
   private pageNumber = 1;
   private zoom = 1;
   private renderedZoom = 1;
@@ -679,9 +681,16 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
       this.readyGeneration = this.generation;
       this.dispatchEvent(new CustomEvent(researchPdfReadyEventName, { detail: { sourceUrl: this.source, pageCount: this.pageCount }, bubbles: true, composed: true }));
     }
+    // A ready listener may synchronously start a backlink/restore jump. Never
+    // publish the provisional first page over that pending location.
+    if (!this.layoutChanging && this.surface.ready && this.surface.finished && this.readyGeneration === this.generation && this.announcedPage !== this.pageNumber) {
+      this.announcedPage = this.pageNumber;
+      this.dispatchEvent(new CustomEvent(researchPdfPageEventName, { detail: { sourceUrl: this.source, page: this.pageNumber }, bubbles: true, composed: true }));
+    }
   }
 
   private async dispose(expectedGeneration: number): Promise<void> {
+    this.announcedPage = 0;
     this.outline.setDocument(undefined);
     this.thumbnails.setDocument(undefined);
     this.sourceAbort?.abort();

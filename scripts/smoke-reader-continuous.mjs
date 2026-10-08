@@ -79,6 +79,18 @@ export async function smokeContinuousReader({ browser, url, errors, fixture }) {
       });
       assert(Math.abs(continuity.gap - 20) < 2, "Adjacent pages share a continuous scroll coordinate space");
       await page.screenshot({ path: `.smoke/continuous-${device.name}.png`, fullPage: true });
+      // Natural mouse/touch scrolling, not only explicit jumps, is remembered
+      // across a full browser-page reload through the real workbench boundary.
+      await disposeSmokeReader(page, reader); await page.reload(); await idle();
+      await activate(panel.getByRole("button", { name: "Continuous synthetic paper", exact: true })); await idle();
+      await activate(panel.getByRole("button", { name: "Reader", exact: true })); await ready(2);
+      await page.waitForFunction(() => {
+        const root = document.querySelector("pi-web-library-workbench").shadowRoot.querySelector("pi-web-research-library-pdf-viewer").shadowRoot;
+        const canvas = root.querySelector('[data-page="2"] canvas');
+        return canvas && Math.abs(canvas.getBoundingClientRect().top - root.querySelector('.viewport').getBoundingClientRect().top - 20) < 2;
+      });
+      await page.screenshot({ path: `.smoke/remembered-page-${device.name}.png`, fullPage: true });
+      await reader.getByLabel("PDF zoom", { exact: true }).selectOption("page"); await ready(2);
       await activate(reader.getByRole("button", { name: "Pages", exact: true }));
       const previews = reader.getByRole("navigation", { name: "PDF page previews", exact: true });
       await page.waitForFunction(() => {
@@ -173,6 +185,14 @@ export async function smokeContinuousReader({ browser, url, errors, fixture }) {
       assert(Math.abs(saved.rect.x - .08) < .01 && saved.rect.y > .04 && saved.rect.y < .09);
       await activate(editor.getByRole("button", { name: "Close annotation", exact: true }));
       await jump(7);
+      await disposeSmokeReader(page, reader); await page.reload(); await idle();
+      await activate(panel.getByRole("button", { name: "Continuous synthetic paper", exact: true })); await idle();
+      await activate(panel.getByRole("button", { name: "Evidence", exact: true })); await idle();
+      const card = panel.locator('section[aria-label="Evidence notebook"] .card').filter({ hasText: body });
+      await activate(card.getByRole("button", { name: "Read quote on page 2", exact: true })); await idle(); await ready(2);
+      // The first verified-ready callback must honor this explicit backlink,
+      // even though page 7 was stored before reload.
+      await reader.getByLabel("PDF zoom", { exact: true }).selectOption("page"); await ready(2);
       await activate(panel.locator(".reader-annotations > summary"));
       await activate(panel.getByRole("button", { name: `Page 2: ${body}`, exact: true })); await idle(); await ready(2);
       assert.equal(await note.inputValue(), body);
@@ -189,7 +209,7 @@ export async function smokeContinuousReader({ browser, url, errors, fixture }) {
       assert(region && region.page === 4 && region.pdfSha256 === saved.pdfSha256);
       assert.deepEqual(region.rect, { x: .1, y: .1, width: .4, height: .1 });
       await disposeSmokeReader(page, reader);
-      checks.push(`${device.name} ${device.viewport.width}x${device.viewport.height} DPR 2: actual ${device.hasTouch ? "CDP touch swipes" : "mouse wheel"} across pages; normal 3-canvas eviction and expanded visible window at 50% focus zoom (6-page cap); mixed-size jumps; lazy six-preview groups, desktop Tab/Enter and touch taps, active-page labels, focus navigation and close eviction; thumbnail and outline jumps preserve page-2 draft/anchor; nested named/explicit outline destinations via desktop Tab/Enter and touch taps, external actions disabled, Focus/Escape/close, thumbnail synchronization; page-2 text save/backlink/edit with immutable anchor; page-4 keyboard region save`);
+      checks.push(`${device.name} ${device.viewport.width}x${device.viewport.height} DPR 2: actual ${device.hasTouch ? "CDP touch swipes" : "mouse wheel"} across pages; normal 3-canvas eviction and expanded visible window at 50% focus zoom (6-page cap); mixed-size jumps; lazy six-preview groups, desktop Tab/Enter and touch taps, active-page labels, focus navigation and close eviction; thumbnail and outline jumps preserve page-2 draft/anchor; nested named/explicit outline destinations via desktop Tab/Enter and touch taps, external actions disabled, Focus/Escape/close, thumbnail synchronization; page-2 text save/backlink/edit with immutable anchor; page-4 keyboard region save; naturally scrolled page 2 restored at page top after full reload; explicit page-2 evidence backlink beats remembered page 7 on initial verified ready`);
     } catch (error) {
       console.error("Continuous failure", device.name, error);
       await page.screenshot({ path: `.smoke/continuous-${device.name}-failure.png`, fullPage: true, timeout: 5_000 }).catch(() => {});

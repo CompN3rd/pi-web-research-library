@@ -11,7 +11,7 @@ beforeEach(() => {
   vi.spyOn(ResearchLibraryPdfViewerElement.prototype, "sourceUrl", "set").mockImplementation(() => undefined);
   vi.spyOn(ResearchLibraryPdfViewerElement.prototype, "showPage").mockImplementation(() => undefined);
 });
-afterEach(() => { document.body.replaceChildren(); localStorage.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+afterEach(() => { document.body.replaceChildren(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); vi.useRealTimers(); });
 
 function root(element: LibraryWorkbenchElement): ShadowRoot { if (element.shadowRoot === null) throw new Error("Missing shadow root"); return element.shadowRoot; }
 function button(element: LibraryWorkbenchElement, label: string): HTMLButtonElement {
@@ -242,6 +242,85 @@ describe("evidence and lifecycle safety", () => {
     expect(viewer(element).showPage).not.toHaveBeenCalled();
     viewer(element).dispatchEvent(new CustomEvent("research-pdf-ready", { detail: { sourceUrl: "http://localhost:3000/raw/research-library/synthetic.pdf", pageCount: 10 } }));
     expect(viewer(element).showPage).toHaveBeenCalledWith(3);
+  });
+  it("remembers verified pages across workbench lifetimes, defers restore, and gives backlinks priority", async () => {
+    const host = workbenchHost(); host.notes.push(syntheticEvidence());
+    let element = await mount(host); await click(element, "Synthetic paper"); await click(element, "Reader");
+    const sourceUrl = "http://localhost:3000/raw/research-library/synthetic.pdf";
+    const emit = (name: string, detail: object) => viewer(element).dispatchEvent(new CustomEvent(name, { detail: { sourceUrl, ...detail } }));
+    emit("research-pdf-ready", { pageCount: 10 }); emit("research-pdf-page", { page: 7 });
+    element.remove(); element = await mount(host); await click(element, "Synthetic paper"); await click(element, "Reader");
+    vi.mocked(viewer(element).showPage).mockClear();
+    emit("research-pdf-page", { page: 1 }); // Provisional loading page must not replace history.
+    emit("research-pdf-ready", { sourceUrl: "wrong", pageCount: 10 });
+    expect(viewer(element).showPage).not.toHaveBeenCalled();
+    emit("research-pdf-ready", { pageCount: 10 });
+    expect(viewer(element).showPage).toHaveBeenLastCalledWith(7);
+    emit("research-pdf-page", { page: 8 });
+    await click(element, "Reader"); // Already open: no restore/jump.
+    expect(viewer(element).showPage).toHaveBeenCalledTimes(1);
+    element.remove(); element = await mount(host); await click(element, "Synthetic paper"); await click(element, "Evidence");
+    await click(element, "Read quote on page 3");
+    emit("research-pdf-ready", { pageCount: 10 });
+    expect(viewer(element).showPage).toHaveBeenLastCalledWith(3);
+  });
+  it.each(["machine", "project", "workspace", "path", "reference", "document", "hash"])("isolates remembered pages by %s even when download URLs match", async dimension => {
+    const host = workbenchHost(); let element = await mount(host);
+    await click(element, "Synthetic paper"); await click(element, "Reader");
+    const oldViewer = viewer(element), sourceUrl = "http://localhost:3000/raw/research-library/synthetic.pdf";
+    oldViewer.dispatchEvent(new CustomEvent("research-pdf-ready", { detail: { sourceUrl, pageCount: 10 } }));
+    oldViewer.dispatchEvent(new CustomEvent("research-pdf-page", { detail: { sourceUrl, page: 7 } }));
+    element.remove();
+    const other = workbenchHost();
+    if (dimension === "machine") other.context = { ...other.context, machine: { ...other.context.machine, id: "other" } };
+    if (dimension === "project") other.context = { ...other.context, workspace: { ...other.context.workspace, projectId: "other" } };
+    if (dimension === "workspace") other.context = { ...other.context, workspace: { ...other.context.workspace, id: "other" } };
+    if (dimension === "path") other.context = { ...other.context, workspace: { ...other.context.workspace, path: "/other" } };
+    const ref = other.refs[0]; if (ref === undefined) throw new Error("Missing fixture");
+    if (dimension === "reference") ref.id = `ref-${"9".repeat(32)}`;
+    const doc = ref.documents[0]; if (doc === undefined) throw new Error("Missing fixture document");
+    if (dimension === "document") doc.id = `doc-${"9".repeat(32)}`;
+    if (dimension === "hash") doc.sha256 = "b".repeat(64);
+    element = await mount(other); await click(element, "Synthetic paper"); await click(element, "Reader");
+    vi.mocked(viewer(element).showPage).mockClear();
+    oldViewer.dispatchEvent(new CustomEvent("research-pdf-page", { detail: { sourceUrl, page: 9 } }));
+    viewer(element).dispatchEvent(new CustomEvent("research-pdf-ready", { detail: { sourceUrl, pageCount: 10 } }));
+    expect(viewer(element).showPage).not.toHaveBeenCalled();
+    element.remove(); element = await mount(host); await click(element, "Synthetic paper"); await click(element, "Reader");
+    viewer(element).dispatchEvent(new CustomEvent("research-pdf-ready", { detail: { sourceUrl, pageCount: 10 } }));
+    expect(viewer(element).showPage).toHaveBeenLastCalledWith(7);
+  });
+  it("replaces a retained reader on reference or hash changes, ignores its late events, and preserves same-source navigation", async () => {
+    const host = workbenchHost(); const element = await mount(host);
+    await click(element, "Synthetic paper"); await click(element, "Reader");
+    const original = viewer(element), sourceUrl = "http://localhost:3000/raw/research-library/synthetic.pdf";
+    const emit = (target: ResearchLibraryPdfViewerElement, name: string, detail: object) => target.dispatchEvent(new CustomEvent(name, { detail: { sourceUrl, ...detail } }));
+    emit(original, "research-pdf-ready", { pageCount: 10 }); emit(original, "research-pdf-page", { page: 6 });
+    await click(element, "Reference"); await click(element, "Other synthetic paper"); await click(element, "Reader");
+    expect(viewer(element)).not.toBe(original);
+    vi.mocked(viewer(element).showPage).mockClear(); emit(original, "research-pdf-page", { page: 9 });
+    emit(viewer(element), "research-pdf-ready", { pageCount: 10 });
+    expect(viewer(element).showPage).not.toHaveBeenCalled();
+    await click(element, "Reference"); await click(element, "Synthetic paper"); await click(element, "Reader");
+    emit(viewer(element), "research-pdf-ready", { pageCount: 10 });
+    expect(viewer(element).showPage).toHaveBeenLastCalledWith(6);
+    const retained = viewer(element); await click(element, "Reference"); await click(element, "Reader");
+    expect(viewer(element)).toBe(retained);
+    const doc = host.refs[0]?.documents[0]; if (doc === undefined) throw new Error("Missing document");
+    doc.sha256 = "b".repeat(64);
+    await click(element, "Reference"); await click(element, "Synthetic paper"); await click(element, "Reader");
+    expect(viewer(element)).not.toBe(retained);
+    vi.mocked(viewer(element).showPage).mockClear(); emit(viewer(element), "research-pdf-ready", { pageCount: 10 });
+    expect(viewer(element).showPage).not.toHaveBeenCalled();
+  });
+  it("shows storage failures without blocking verified reading or annotation drafts", async () => {
+    vi.spyOn(window, "localStorage", "get").mockImplementation(() => { throw new Error("Storage denied"); });
+    const element = await mount(); await click(element, "Synthetic paper"); await click(element, "Reader");
+    expect(root(element).textContent).toContain("Remembered reading position is unavailable");
+    viewer(element).dispatchEvent(new CustomEvent(researchPdfSelectionEventName, { detail: { page: 2, quote: "A passage", rect: { x: .1, y: .1, width: .2, height: .1 } } }));
+    await element.updateComplete;
+    await input(element, "Evidence note / question", "Preserved comment");
+    expect(control(element, "Evidence note / question").value).toBe("Preserved comment");
   });
   it("retains tombstone recovery messaging after evidence deletion", async () => {
     const host = workbenchHost(); host.notes.push(syntheticEvidence()); host.overrides.set("evidence.delete", () => ({ ...syntheticEvidence(), revision: 2, deletedAt: now }));

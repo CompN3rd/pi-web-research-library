@@ -2,10 +2,11 @@ import type { WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
 import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { emptyReferenceFields, libraryTaskKinds, referenceTypes, LIBRARY_MAX_PDF_BYTES } from "../domain/workbench.js";
 import type { BibliographyFormat, CitationStyle, LibraryCollection, LibraryDocument, LibraryEvidence, LibraryManuscript, LibraryPage, LibraryReference, LibraryTask, LibraryTaskKind, LibraryTextHit, ReferenceFields } from "../domain/workbench.js";
-import { defineResearchLibraryPdfViewerElement, ResearchLibraryPdfViewerElement, researchPdfSelectionEventName, researchPdfAnnotationEventName, researchPdfReadyEventName, type ResearchPdfSelectionDetail } from "./pdfViewerElement.js";
+import { defineResearchLibraryPdfViewerElement, ResearchLibraryPdfViewerElement, researchPdfSelectionEventName, researchPdfAnnotationEventName, researchPdfReadyEventName, researchPdfPageEventName, type ResearchPdfSelectionDetail } from "./pdfViewerElement.js";
 import type { PdfPeerSource } from "./pdfRange.js";
 import { WorkbenchClient, workbenchContextKey, workbenchId, reference, collection, evidence, task, manuscript, page, object, list, text, fields, download, choice, textHit } from "./workbenchClient.js";
 import { workbenchStyles } from "./workbenchStyles.js";
+import { ReadingPositions } from "./readingPositions.js";
 
 type Tab = "Reference" | "Reader" | "Evidence" | "Research" | "Writing" | "Import & export";
 interface ReferenceDraft { id: string; revision: number; fields: ReferenceFields }
@@ -49,6 +50,12 @@ export class LibraryWorkbenchElement extends LitElement {
   private activeDocument: LibraryDocument | null = null;
   private viewer: ResearchLibraryPdfViewerElement | null = null;
   private pendingPage: { sourceUrl: string; page: number } | null = null;
+  private readingSource: { key: string; sourceUrl: string; pageCount: number } | null = null;
+  private positionNotice = "";
+  private readonly readingPositions = new ReadingPositions(() => window.localStorage, error => {
+    this.positionNotice = `Remembered reading position is unavailable in this browser. Reading and annotations still work. ${error instanceof Error ? error.message : "Browser storage failed."}`;
+    this.requestUpdate();
+  });
   private evidencePage = emptyPage<LibraryEvidence>();
   private tasks = emptyPage<LibraryTask>();
   private manuscripts = emptyPage<LibraryManuscript>();
@@ -131,7 +138,7 @@ export class LibraryWorkbenchElement extends LitElement {
   }
   private stop(): void {
     this.epoch++; this.listGeneration++; this.client?.dispose(); this.client = undefined; this.uploadCancel?.(); this.uploadCancel = undefined;
-    this.stopPolling(); this.viewer?.remove(); this.viewer = null; this.pendingPage = null; this.busy = false;
+    this.stopPolling(); this.viewer?.remove(); this.viewer = null; this.pendingPage = null; this.readingSource = null; this.busy = false;
   }
   private start(): void { if (this.binding === undefined) return; this.client = new WorkbenchClient(this.binding); this.run(async client => { await this.loadLibrary(client); this.collections = await client.request("collections.list", {}, v => list(v, collection)); }); }
   private run(action: (client: WorkbenchClient) => Promise<void>): void {
@@ -155,8 +162,11 @@ export class LibraryWorkbenchElement extends LitElement {
   private async openReference(client: WorkbenchClient, id: string): Promise<void> {
     if (this.drafts.referenceDirty || this.drafts.evidenceDirty) throw new Error("Save or discard pending metadata and evidence before changing reference.");
     const result = await client.request("library.get", { id }, reference);
+    const referenceChanged = this.active?.id !== result.id;
     this.active = result; this.drafts.reference = { id: result.id, revision: result.revision, fields: fields(result) }; this.drafts.evidence = null;
-    if (this.activeDocument !== null && !result.documents.some(doc => doc.id === this.activeDocument?.id)) { this.activeDocument = null; this.viewer?.remove(); this.viewer = null; }
+    if (this.activeDocument !== null && (referenceChanged || !result.documents.some(doc => doc.id === this.activeDocument?.id && doc.sha256 === this.activeDocument.sha256))) {
+      this.activeDocument = null; this.viewer?.remove(); this.viewer = null; this.readingSource = null; this.pendingPage = null;
+    }
     await this.loadEvidence(client);
   }
   private async loadEvidence(client: WorkbenchClient, offset = 0): Promise<void> {
@@ -209,7 +219,7 @@ export class LibraryWorkbenchElement extends LitElement {
     if (this.binding === undefined) return html`<p>Choose a workspace to open the native Research Library.</p>`;
     const reading = this.tab === "Reader" && this.activeDocument !== null;
     return html`<header ?hidden=${reading}><div><h1>Research Library</h1><span class="muted">A place to read, connect and write.</span></div><span class="muted">${this.binding.workspace.label}</span></header>
-      <div class="status" role="status" aria-live="polite">${this.busy ? "Working… " : ""}${this.notice}</div><div class="status" role="alert">${this.error}</div>
+      <div class="status" role="status" aria-live="polite">${this.busy ? "Working… " : ""}${this.notice}${this.positionNotice === "" ? nothing : html`<p>${this.positionNotice}</p>`}</div><div class="status" role="alert">${this.error}</div>
       <div class="layout ${reading ? "reading" : ""} ${this.readerLibraryVisible ? "with-library" : ""}" aria-busy=${String(this.busy)}><aside aria-label="Catalog" ?hidden=${reading && !this.readerLibraryVisible}>${this.renderCatalog()}</aside><main>
       <nav aria-label="Library workspace">${(["Reference", "Reader", "Evidence", "Research", "Writing", "Import & export"] satisfies Tab[]).map(tab => html`<button type="button" aria-pressed=${String(this.tab === tab)} @click=${() => { this.selectTab(tab); }}>${tab}</button>`)}</nav>
       <section ?hidden=${this.tab !== "Reference"} aria-label="Reference metadata">${this.renderReference()}</section>
@@ -359,13 +369,36 @@ export class LibraryWorkbenchElement extends LitElement {
     const epoch = this.epoch;
     this.tab = "Reader"; this.activeDocument = doc; this.requestUpdate(); await this.updateComplete;
     if (epoch !== this.epoch || !this.isConnected) return;
+    const sourceUrl = context.files.downloadUrl(doc.path, { version: doc.sha256 });
+    const key = JSON.stringify([workbenchContextKey(context), ref.id, doc.id, doc.sha256]);
+    // URL equality alone cannot distinguish reference-scoped attachments or a
+    // host helper that returns the same URL for different verified hashes.
+    if (this.readingSource?.key !== key || this.readingSource.sourceUrl !== sourceUrl) {
+      this.viewer?.remove(); this.viewer = null; this.pendingPage = null;
+      this.readingSource = { key, sourceUrl, pageCount: 0 };
+    }
     if (this.viewer === null) {
-      this.viewer = new ResearchLibraryPdfViewerElement();
-      this.viewer.addEventListener(researchPdfReadyEventName, (event: Event) => {
-        if (!(event instanceof CustomEvent) || this.pendingPage === null) return;
+      this.readingSource = { key, sourceUrl, pageCount: 0 };
+      const initialPage = targetPage ?? this.readingPositions.read(key);
+      this.pendingPage = initialPage === undefined ? null : { sourceUrl, page: initialPage };
+      const viewer = new ResearchLibraryPdfViewerElement();
+      this.viewer = viewer;
+      viewer.addEventListener(researchPdfReadyEventName, (event: Event) => {
+        if (!(event instanceof CustomEvent) || this.viewer !== viewer || this.readingSource?.key !== key) return;
         const detail: unknown = event.detail;
-        if (object(detail)["sourceUrl"] !== this.pendingPage.sourceUrl) return;
-        this.viewer?.showPage(this.pendingPage.page); this.pendingPage = null;
+        const ready = object(detail);
+        if (ready["sourceUrl"] !== sourceUrl || typeof ready["pageCount"] !== "number" || !Number.isSafeInteger(ready["pageCount"]) || ready["pageCount"] < 1) return;
+        this.readingSource.pageCount = ready["pageCount"];
+        const pending = this.pendingPage; this.pendingPage = null;
+        if (pending?.sourceUrl === sourceUrl) viewer.showPage(pending.page);
+      });
+      viewer.addEventListener(researchPdfPageEventName, (event: Event) => {
+        if (!(event instanceof CustomEvent) || this.viewer !== viewer || this.readingSource?.key !== key || this.pendingPage !== null) return;
+        const detail: unknown = event.detail;
+        const position = object(detail);
+        const page = position["page"];
+        if (position["sourceUrl"] !== sourceUrl || typeof page !== "number" || !Number.isSafeInteger(page) || page < 1 || page > this.readingSource.pageCount) return;
+        this.readingPositions.save(key, page);
       });
       this.viewer.addEventListener(researchPdfSelectionEventName, (event: Event) => {
         if (!(event instanceof CustomEvent)) return;
@@ -382,11 +415,11 @@ export class LibraryWorkbenchElement extends LitElement {
     }
     const source: PdfPeerSource = { peer: context.peer, referenceId: ref.id, documentId: doc.id, expectedSha256: doc.sha256 };
     this.viewer.pdfPeerSource = source;
-    const sourceUrl = context.files.downloadUrl(doc.path, { version: doc.sha256 });
-    const alreadyLoaded = this.viewer.sourceUrl === sourceUrl && this.viewer.pageCount > 0;
-    this.pendingPage = targetPage === undefined ? null : { sourceUrl, page: targetPage };
+    if (targetPage !== undefined) this.pendingPage = { sourceUrl, page: targetPage };
     this.viewer.sourceUrl = sourceUrl;
-    if (alreadyLoaded && targetPage !== undefined) { this.viewer.showPage(targetPage); this.pendingPage = null; }
+    if (this.readingSource.pageCount > 0 && this.viewer.pageCount > 0 && targetPage !== undefined) {
+      this.pendingPage = null; this.viewer.showPage(targetPage);
+    }
     this.updateMarkers();
   }
   private updateMarkers(): void {

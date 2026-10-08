@@ -6,6 +6,7 @@ import {
   researchPdfAnnotationEventName,
   researchPdfSelectionEventName,
   researchPdfReadyEventName,
+  researchPdfPageEventName,
   type ResearchPdfSelectionDetail,
   MAX_PDF_RENDER_DIMENSION,
   MAX_PDF_RENDER_PIXELS,
@@ -127,11 +128,24 @@ describe("ResearchLibraryPdfViewerElement", () => {
       element.showPage(3);
     });
     element.addEventListener(researchPdfReadyEventName, ready);
+    const pages: unknown[] = [];
+    element.addEventListener(researchPdfPageEventName, event => { if (event instanceof CustomEvent) pages.push(event.detail); });
     document.body.append(element); element.sourceUrl = "paper.pdf";
     await statusIncludes(element, "Page 3 of 3");
     expect(ready).toHaveBeenCalledTimes(1);
+    expect(pages).toEqual([{ sourceUrl: "paper.pdf", page: 3 }]);
     element.showPage(2); await statusIncludes(element, "Page 2 of 3");
     expect(ready).toHaveBeenCalledTimes(1);
+    expect(pages).toEqual([{ sourceUrl: "paper.pdf", page: 3 }, { sourceUrl: "paper.pdf", page: 2 }]);
+    element.showPage(2); await settle();
+    expect(pages).toHaveLength(2);
+    element.showPage(999); await statusIncludes(element, "Page 3 of 3");
+    expect(pages.at(-1)).toEqual({ sourceUrl: "paper.pdf", page: 3 });
+    element.removeEventListener(researchPdfReadyEventName, ready);
+    element.sourceUrl = "replacement.pdf"; await statusIncludes(element, "Page 1 of 3");
+    expect(pages.at(-1)).toEqual({ sourceUrl: "replacement.pdf", page: 1 });
+    const count = pages.length; element.remove(); await settle();
+    expect(pages).toHaveLength(count);
   });
 
   it("lets a zoom supersede the first render without destroying the document or losing its ready event", async () => {
