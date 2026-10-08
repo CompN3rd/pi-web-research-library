@@ -83,6 +83,41 @@ describe("ResearchLibraryPdfViewerElement", () => {
     expect(element.shadowRoot?.querySelectorAll("[data-thumbnail-page]")).toHaveLength(0);
   });
 
+  it("connects internal outline destinations to continuous pages and thumbnail state without another document", async () => {
+    const harness = fakePdfJs(8);
+    const getOutline = vi.fn().mockResolvedValue([{ title: "Methods", dest: "methods", items: [] }]);
+    Object.assign(harness.document, { getOutline, getDestination: vi.fn().mockResolvedValue([{ num: 12, gen: 0 }, { name: "Fit" }]), getPageIndex: vi.fn().mockResolvedValue(3) });
+    const element = createViewer(); element.pdfJsLoader = harness.loader;
+    document.body.append(element); element.sourceUrl = "paper.pdf";
+    await statusIncludes(element, "Page 1 of 8");
+    expect(getOutline).not.toHaveBeenCalled();
+    shadowButton(element, "[data-thumbnails-toggle]").click();
+    shadowButton(element, "[data-outline-toggle]").click(); await settle();
+    shadowButton(element, "[data-outline] li button").click();
+    await statusIncludes(element, "Page 4 of 8");
+    expect(shadowButton(element, '[data-thumbnail-page="4"]').getAttribute("aria-current")).toBe("page");
+    expect(harness.getDocument).toHaveBeenCalledOnce();
+    element.remove(); await settle();
+    expect(shadow(element, "[data-outline]", HTMLElement).hidden).toBe(true);
+    expect(element.shadowRoot?.querySelectorAll("[data-outline] li")).toHaveLength(0);
+  });
+
+  it("applies a pending fitted viewport change with an explicit page jump", async () => {
+    const harness = fakePdfJs(3), element = createViewer(); element.pdfJsLoader = harness.loader;
+    const viewport = shadow(element, ".viewport", HTMLElement);
+    // Inject dimensions at the DOM boundary; assert render input, not happy-dom geometry.
+    let width = 640;
+    Object.defineProperty(viewport, "clientWidth", { get: () => width });
+    Object.defineProperty(viewport, "clientHeight", { get: () => 800 });
+    document.body.append(element); element.sourceUrl = "paper.pdf";
+    await statusIncludes(element, "Page 1 of 3");
+    width = 340; element.showPage(3);
+    await statusIncludes(element, "Page 3 of 3");
+    const calls = pageAt(harness.pages, 2).getViewport.mock.calls;
+    expect(calls.at(-1)?.[0].scale).toBe(.5);
+    expect(element.currentPage).toBe(3);
+  });
+
   it("announces a rendered source so a pending evidence backlink can select its page", async () => {
     const harness = fakePdfJs(3);
     const element = createViewer(); element.pdfJsLoader = harness.loader;

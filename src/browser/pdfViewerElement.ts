@@ -3,6 +3,7 @@ import { pdfViewerTemplate } from "./pdfViewerTemplate.js";
 import { PdfContinuousLayout } from "./pdfContinuousLayout.js";
 import { PdfPageSurface } from "./pdfPageSurface.js";
 import { PdfThumbnails } from "./pdfThumbnails.js";
+import { PdfOutline, type PdfOutlineDocument } from "./pdfOutline.js";
 import { selectedTextRange, textSelectionAnchor, type TextSelectionAnchor } from "./pdfTextSelection.js";
 import { findPdfText, matchInTextRun, pdfTextStrings, PDF_FIND_MAX_PAGES, PDF_FIND_MAX_HITS, PDF_FIND_MAX_PAGE_CHARACTERS, type PdfFitMode, type PdfFindHit } from "./pdfReading.js";
 import { quoteFromTextItems, textItemsToQuoteItems, type PdfTextContentItem } from "./pdfQuote.js";
@@ -57,7 +58,7 @@ export interface PdfPage {
   cleanup?(): void;
 }
 
-export interface PdfDocument extends Pick<PDFDocumentProxy, "numPages"> {
+export interface PdfDocument extends Pick<PDFDocumentProxy, "numPages">, Partial<Pick<PdfOutlineDocument, "getOutline" | "getDestination" | "getPageIndex">> {
   getPage(pageNumber: number): Promise<PdfPage>;
 }
 
@@ -97,6 +98,10 @@ export interface PdfJsModule extends RangeModule {
 
 export type PdfJsModuleLoader = () => Promise<PdfJsModule>;
 
+function hasOutlineApis(pdf: PdfDocument): pdf is PdfDocument & PdfOutlineDocument {
+  return typeof pdf.getOutline === "function" && typeof pdf.getDestination === "function" && typeof pdf.getPageIndex === "function";
+}
+
 export function defineResearchLibraryPdfViewerElement(): void {
   if (!customElements.get(researchLibraryPdfViewerTagName)) customElements.define(researchLibraryPdfViewerTagName, ResearchLibraryPdfViewerElement);
 }
@@ -108,6 +113,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
   private layout: PdfContinuousLayout | undefined;
   private readonly stage: HTMLElement;
   private readonly thumbnails: PdfThumbnails;
+  private readonly outline: PdfOutline;
   private scrollFrame: number | undefined;
   private windowGeneration = 0;
   private layoutChanging = false;
@@ -181,6 +187,8 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
       (number, page) => { if (!this.surfaces.has(number)) page.cleanup?.(); },
     );
     this.thumbnails.setDocument(undefined);
+    this.outline = new PdfOutline(this.control("[data-outline]"), required(this.root.querySelector("[data-outline-toggle]"), HTMLButtonElement), page => { this.showPage(page); });
+    this.outline.setDocument(undefined);
     this.statusElement = required(this.root.querySelector("[data-status]"), HTMLElement);
     this.fallback = required(this.root.querySelector("[data-open-pdf]"), HTMLAnchorElement);
     this.previousButton = required(this.root.querySelector("[data-previous]"), HTMLButtonElement);
@@ -482,6 +490,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
       // PDF.js 6 owns destruction on the loading task, even after its document resolves.
       this.document = document;
       this.thumbnails.setDocument(document);
+      this.outline.setDocument(hasOutlineApis(document) ? document : undefined);
       this.pageNumber = Math.max(1, Math.min(document.numPages, this.pageNumber));
       await this.renderCurrentPage(generation, keepPosition);
     } catch (error) {
@@ -494,6 +503,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
 
   private activatePage(number: number): void {
     if (number === this.pageNumber) return;
+    this.outline.cancelNavigation();
     this.setMarking(false);
     this.toggleTextTools(false);
     window.getSelection()?.removeAllRanges();
@@ -514,12 +524,20 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
   }
 
   private async goToPage(next: number): Promise<void> {
+    this.outline.cancelNavigation();
     if (this.document === undefined || !Number.isSafeInteger(next)) return;
     const bounded = Math.max(1, Math.min(this.document.numPages, next));
     const positionGeneration = ++this.positionGeneration;
     this.layoutChanging = true;
     this.pendingPageJump = bounded;
     this.activatePage(bounded);
+    // Opening/closing navigation or Focus changes the fitted viewport. Apply it
+    // with this jump, not in a later resize callback that could cancel new tools.
+    if (this.fitMode !== "custom" && this.viewportSize !== this.currentViewportSize()) {
+      clearTimeout(this.resizeTimer);
+      await this.renderCurrentPage(this.generation, false);
+      return;
+    }
     await this.renderWindow();
     if (positionGeneration !== this.positionGeneration || bounded !== this.pageNumber || this.layout === undefined) return;
     this.viewportElement.scrollTop = this.layout.top(bounded) - 20;
@@ -588,7 +606,10 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
       surface.element.style.height = `${String(size.height)}px`;
       width = Math.max(width, size.width + 40);
     }
-    this.stage.style.height = `${String(layout.height)}px`;
+    // A short final page must still be able to align at the top. Otherwise a
+    // clamped jump is immediately reclassified as the preceding page on scroll.
+    const height = Math.max(layout.height, layout.top(this.pageCount) - 20 + this.viewportElement.clientHeight);
+    this.stage.style.height = `${String(height)}px`;
     this.stage.style.width = `${String(width)}px`;
   }
 
@@ -661,6 +682,7 @@ export class ResearchLibraryPdfViewerElement extends HTMLElement {
   }
 
   private async dispose(expectedGeneration: number): Promise<void> {
+    this.outline.setDocument(undefined);
     this.thumbnails.setDocument(undefined);
     this.sourceAbort?.abort();
     this.sourceAbort = undefined;

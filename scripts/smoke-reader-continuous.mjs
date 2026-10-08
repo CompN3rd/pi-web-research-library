@@ -6,7 +6,7 @@ import { disposeSmokeReader } from "./smoke-reader-annotations.mjs";
 
 // Actual scroll input and page geometry through Library, not a detached viewer demo.
 export async function smokeContinuousReader({ browser, url, errors, fixture }) {
-  const bytes = syntheticReaderPdf(8, true);
+  const bytes = syntheticReaderPdf(8, true, true);
   const path = join(fixture.root, "continuous.pdf"); await writeFile(path, bytes);
   const checks = [];
   for (const device of [
@@ -15,7 +15,7 @@ export async function smokeContinuousReader({ browser, url, errors, fixture }) {
     { name: "narrow-touch", viewport: { width: 390, height: 844 }, hasTouch: true },
   ]) {
     const context = await browser.newContext({ viewport: device.viewport, hasTouch: device.hasTouch, deviceScaleFactor: 2 });
-    const page = await context.newPage(); page.on("pageerror", error => errors.push(String(error)));
+    const page = await context.newPage(); page.setDefaultTimeout(30_000); page.on("pageerror", error => errors.push(String(error)));
     const panel = page.locator("pi-web-library-workbench"), reader = panel.locator("pi-web-research-library-pdf-viewer");
     const activate = async locator => device.hasTouch ? locator.tap() : locator.click();
     const idle = async () => { await panel.locator('[aria-busy="false"]').waitFor(); assert.equal((await panel.locator('[role="alert"]').textContent()).trim(), ""); };
@@ -102,10 +102,37 @@ export async function smokeContinuousReader({ browser, url, errors, fixture }) {
       await activate(previews.getByRole("button", { name: "Close page previews", exact: true }));
       assert.equal(await previews.locator("canvas").count(), 0);
       await activate(reader.getByRole("button", { name: "Exit reading focus", exact: true }));
+      await activate(reader.getByRole("button", { name: "Outline", exact: true }));
+      const outline = reader.getByRole("navigation", { name: "PDF outline", exact: true });
+      await outline.getByRole("button", { name: "Methods", exact: true }).waitFor();
+      assert.equal(await outline.locator("ol ol button").textContent(), "Methods");
+      assert(await outline.getByRole("button", { name: "External website — no internal destination", exact: true }).isDisabled());
+      if (device.hasTouch) await outline.getByRole("button", { name: "Methods", exact: true }).tap();
+      else { await outline.getByRole("button", { name: "Introduction", exact: true }).focus(); await page.keyboard.press("Tab"); await page.keyboard.press("Enter"); }
+      await ready(4);
+      await activate(reader.getByRole("button", { name: "Reading focus", exact: true }));
+      await activate(outline.getByRole("button", { name: "Results", exact: true })); await ready(8);
+      assert.equal(await reader.getByLabel("PDF zoom", { exact: true }).inputValue(), "page", "Outline ignores bookmark zoom");
+      await page.screenshot({ path: `.smoke/outline-${device.name}.png`, fullPage: true });
+      if (device.hasTouch) await outline.getByRole("button", { name: "Close outline", exact: true }).tap();
+      else await page.keyboard.press("Escape");
+      assert.equal(await reader.getByRole("button", { name: "Outline", exact: true }).getAttribute("aria-expanded"), "false");
+      assert(await reader.getByRole("button", { name: "Exit reading focus", exact: true }).isVisible(), "Closing outline does not exit Focus");
+      await activate(reader.getByRole("button", { name: "Exit reading focus", exact: true }));
       await jump(8); assert(await reader.locator("canvas").count() <= 3);
+      await page.waitForFunction(() => {
+        const root = document.querySelector("pi-web-library-workbench").shadowRoot.querySelector("pi-web-research-library-pdf-viewer").shadowRoot;
+        const canvas = root.querySelector('[data-page="8"] canvas');
+        return root.querySelector('[data-page-number]').value === "8" && canvas && Math.abs(canvas.getBoundingClientRect().top - root.querySelector('.viewport').getBoundingClientRect().top - 20) < 2;
+      });
       assert.equal(await reader.locator('[data-page="1"]').count(), 0, "Distant page DOM is evicted");
       await jump(4);
-      const landscape = await reader.locator('[data-active-page=true] canvas').boundingBox(); assert(landscape && landscape.width > landscape.height);
+      await page.waitForFunction(() => {
+        const root = document.querySelector("pi-web-library-workbench").shadowRoot.querySelector("pi-web-research-library-pdf-viewer").shadowRoot;
+        const canvas = root.querySelector('[data-page="4"][data-active-page=true] canvas');
+        const box = canvas?.getBoundingClientRect();
+        return box && box.width > box.height && box.height > 0;
+      });
       await reader.getByLabel("PDF zoom", { exact: true }).selectOption("1"); await ready(4);
       await reader.locator(".viewport").focus(); await page.keyboard.press("-");
       await reader.getByText(/Page 4 of 8 · 75%/).waitFor(); await page.keyboard.press("-");
@@ -133,6 +160,11 @@ export async function smokeContinuousReader({ browser, url, errors, fixture }) {
       await activate(reader.getByRole("button", { name: "Pages", exact: true }));
       await activate(previews.getByRole("button", { name: "Go to PDF page 5", exact: true })); await ready(5);
       assert.equal(await note.inputValue(), body, "Thumbnail navigation preserves the open annotation draft");
+      await activate(reader.getByRole("button", { name: "Outline", exact: true }));
+      await activate(outline.getByRole("button", { name: "Results", exact: true })); await ready(8);
+      assert.equal(await note.inputValue(), body, "Outline navigation preserves the open annotation draft");
+      assert.equal(await previews.getByRole("button", { name: "Go to PDF page 8", exact: true }).getAttribute("aria-current"), "page");
+      await activate(outline.getByRole("button", { name: "Close outline", exact: true }));
       await activate(previews.getByRole("button", { name: "Close page previews", exact: true }));
       await activate(editor.getByRole("button", { name: "Save evidence", exact: true })); await idle();
       const saved = await page.evaluate(async body => (await window.researchPeer.request("evidence.list", { version: 1, payload: {} })).items.find(item => item.body === body), body);
@@ -157,10 +189,15 @@ export async function smokeContinuousReader({ browser, url, errors, fixture }) {
       assert(region && region.page === 4 && region.pdfSha256 === saved.pdfSha256);
       assert.deepEqual(region.rect, { x: .1, y: .1, width: .4, height: .1 });
       await disposeSmokeReader(page, reader);
-      checks.push(`${device.name} ${device.viewport.width}x${device.viewport.height} DPR 2: actual ${device.hasTouch ? "CDP touch swipes" : "mouse wheel"} across pages; normal 3-canvas eviction and expanded visible window at 50% focus zoom (6-page cap); mixed-size jumps; lazy six-preview groups, desktop Tab/Enter and touch taps, active-page labels, focus navigation and close eviction; thumbnail jump preserves page-2 draft/anchor; page-2 text save/backlink/edit with immutable anchor; page-4 keyboard region save`);
+      checks.push(`${device.name} ${device.viewport.width}x${device.viewport.height} DPR 2: actual ${device.hasTouch ? "CDP touch swipes" : "mouse wheel"} across pages; normal 3-canvas eviction and expanded visible window at 50% focus zoom (6-page cap); mixed-size jumps; lazy six-preview groups, desktop Tab/Enter and touch taps, active-page labels, focus navigation and close eviction; thumbnail and outline jumps preserve page-2 draft/anchor; nested named/explicit outline destinations via desktop Tab/Enter and touch taps, external actions disabled, Focus/Escape/close, thumbnail synchronization; page-2 text save/backlink/edit with immutable anchor; page-4 keyboard region save`);
     } catch (error) {
-      await page.screenshot({ path: `.smoke/continuous-${device.name}-failure.png`, fullPage: true }).catch(() => {});
+      console.error("Continuous failure", device.name, error);
+      await page.screenshot({ path: `.smoke/continuous-${device.name}-failure.png`, fullPage: true, timeout: 5_000 }).catch(() => {});
       console.error("Continuous reader:", await reader.locator("[data-status]").textContent().catch(() => "unavailable"));
+      console.error("Continuous geometry:", await reader.evaluate(element => {
+        const root = element.shadowRoot, view = root.querySelector(".viewport");
+        return { scrollTop: view.scrollTop, height: view.clientHeight, total: view.scrollHeight, viewTop: view.getBoundingClientRect().top, pages: [...root.querySelectorAll('[data-page]')].map(page => ({ page: page.dataset.page, top: page.getBoundingClientRect().top, height: page.getBoundingClientRect().height })) };
+      }).catch(() => "unavailable"));
       throw error;
     } finally { await context.close(); }
   }
