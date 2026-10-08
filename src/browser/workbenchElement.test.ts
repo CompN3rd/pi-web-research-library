@@ -28,7 +28,12 @@ async function settle(element: LibraryWorkbenchElement): Promise<void> {
   await vi.waitFor(() => { expect(root(element).querySelector("[aria-busy]")?.getAttribute("aria-busy")).toBe("false"); }, { timeout: 1000, interval: 1 });
   await element.updateComplete;
 }
-async function click(element: LibraryWorkbenchElement, label: string): Promise<void> { button(element, label).click(); await settle(element); }
+async function click(element: LibraryWorkbenchElement, label: string): Promise<void> {
+  const target = button(element, label);
+  const tools = target.closest<HTMLDetailsElement>(".workspace-tools");
+  if (tools !== null && !tools.open) tools.querySelector("summary")?.click();
+  target.click(); await settle(element);
+}
 async function input(element: LibraryWorkbenchElement, label: string, value: string): Promise<void> {
   const field = control(element, label); field.value = value; field.dispatchEvent(new Event(field instanceof HTMLSelectElement ? "change" : "input", { bubbles: true })); await element.updateComplete;
 }
@@ -73,6 +78,42 @@ describe("native workbench catalog and reader", () => {
     await click(element, "Hide library"); await click(element, "Reference");
     expect(root(element).querySelector("aside")?.hidden).toBe(false);
     await click(element, "Reader"); expect(viewer(element)).toBe(reader);
+  });
+  it("tucks all secondary workflows into a disclosure and returns keyboard focus when choosing one", async () => {
+    const host = workbenchHost(); const element = await mount(host);
+    await click(element, "Synthetic paper"); await click(element, "Reader");
+    const reader = viewer(element);
+    const tools = root(element).querySelector<HTMLDetailsElement>(".workspace-tools");
+    const summary = tools?.querySelector("summary");
+    if (tools === null || summary === undefined || summary === null) throw new Error("Missing workspace tools");
+    expect(tools.open).toBe(false);
+    expect(button(element, "Reader").closest("details")).toBeNull();
+    for (const [label, section] of [["Reference", "Reference metadata"], ["Evidence", "Evidence notebook"], ["Research", "Research tasks"], ["Writing", "Manuscript writing"], ["Import & export", "Bibliography portability"]] as const) {
+      summary.click(); expect(tools.open).toBe(true);
+      const target = button(element, label); expect(target.closest("details")).toBe(tools);
+      target.focus(); target.click(); await settle(element);
+      expect(tools.open).toBe(false); expect(root(element).activeElement).toBe(summary);
+      expect(summary.textContent).toContain(label);
+      expect(root(element).querySelector<HTMLElement>(`section[aria-label="${section}"]`)?.hidden).toBe(false);
+      await click(element, "Reader"); expect(viewer(element)).toBe(reader);
+      expect(root(element).querySelector<HTMLElement>('section[aria-label="PDF reader"]')?.hidden).toBe(false);
+    }
+    expect(host.payloads("tasks.start")).toHaveLength(0);
+    expect(host.files.writeFile).not.toHaveBeenCalled();
+  });
+  it("signals hidden unsaved work and preserves its protection across secondary navigation", async () => {
+    const element = await mount(); await click(element, "Synthetic paper"); await click(element, "Reader");
+    const reader = viewer(element);
+    await click(element, "Reference"); await input(element, "Title", "Pending metadata from tools");
+    await click(element, "Reader");
+    expect(root(element).querySelector(".workspace-tools > summary")?.textContent).toContain("Unsaved edits");
+    await click(element, "Show library"); await click(element, "Other synthetic paper");
+    expect(root(element).querySelector("[role=alert]")?.textContent).toContain("Save or discard");
+    await click(element, "Writing"); await click(element, "Import & export"); await click(element, "Reference");
+    expect(control(element, "Title").value).toBe("Pending metadata from tools");
+    await click(element, "Discard metadata edits"); await click(element, "Reader");
+    expect(root(element).querySelector(".workspace-tools > summary")?.textContent).not.toContain("Unsaved edits");
+    expect(viewer(element)).toBe(reader);
   });
   it("recovers when a peer becomes available without discarding draft text", async () => {
     const host = workbenchHost(); const absent = { ...host.context }; delete absent.peer;

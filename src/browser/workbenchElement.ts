@@ -185,7 +185,15 @@ export class LibraryWorkbenchElement extends LitElement {
   private async loadWriting(client: WorkbenchClient, offset = 0): Promise<void> {
     const result = await client.request("writing.list", { offset }, page(manuscript)); this.manuscripts = offset === 0 ? result : { ...result, items: [...this.manuscripts.items, ...result.items] };
   }
+  private closeWorkspaceTools(): void {
+    const tools = this.renderRoot.querySelector<HTMLDetailsElement>(".workspace-tools");
+    if (tools === null) return;
+    // Do not leave keyboard focus in a now-collapsed disclosure.
+    if (tools.contains(this.shadowRoot?.activeElement ?? null)) tools.querySelector("summary")?.focus();
+    tools.open = false;
+  }
   private selectTab(tab: Tab): void {
+    this.closeWorkspaceTools();
     if (tab !== "Reader") this.viewer?.setReadingFocus(false);
     this.tab = tab; this.requestUpdate();
     if (tab === "Reader" && this.activeDocument === null && this.active?.deletedAt === null) {
@@ -221,7 +229,12 @@ export class LibraryWorkbenchElement extends LitElement {
     return html`<header ?hidden=${reading}><div><h1>Research Library</h1><span class="muted">A place to read, connect and write.</span></div><span class="muted">${this.binding.workspace.label}</span></header>
       <div class="status" role="status" aria-live="polite">${this.busy ? "Working… " : ""}${this.notice}${this.positionNotice === "" ? nothing : html`<p>${this.positionNotice}</p>`}</div><div class="status" role="alert">${this.error}</div>
       <div class="layout ${reading ? "reading" : ""} ${this.readerLibraryVisible ? "with-library" : ""}" aria-busy=${String(this.busy)}><aside aria-label="Catalog" ?hidden=${reading && !this.readerLibraryVisible}>${this.renderCatalog()}</aside><main>
-      <nav aria-label="Library workspace">${(["Reference", "Reader", "Evidence", "Research", "Writing", "Import & export"] satisfies Tab[]).map(tab => html`<button type="button" aria-pressed=${String(this.tab === tab)} @click=${() => { this.selectTab(tab); }}>${tab}</button>`)}</nav>
+      <nav aria-label="Library workspace">
+        <button type="button" aria-pressed=${String(this.tab === "Reader")} @click=${() => { this.selectTab("Reader"); }}>Reader</button>
+        <details class="workspace-tools"><summary>Workspace tools${this.tab === "Reader" ? nothing : html`<span class="muted"> · ${this.tab}</span>`}${this.hasDrafts() ? html`<span class="badge">Unsaved edits</span>` : nothing}</summary>
+          <div class="workspace-tool-list">${(["Reference", "Evidence", "Research", "Writing", "Import & export"] satisfies Tab[]).map(tab => html`<button type="button" aria-pressed=${String(this.tab === tab)} @click=${() => { this.selectTab(tab); }}>${tab}</button>`)}</div>
+        </details>
+      </nav>
       <section ?hidden=${this.tab !== "Reference"} aria-label="Reference metadata">${this.renderReference()}</section>
       <section ?hidden=${this.tab !== "Reader"} aria-label="PDF reader">
         <div class="reader-heading">
@@ -367,6 +380,7 @@ export class LibraryWorkbenchElement extends LitElement {
     if (context.peer?.request === undefined) throw new Error("Verified PDF reading requires the paired Research Library server.");
     if (context.files.capabilityVersion !== 1) throw new Error("The host must provide the public PDF download helper.");
     const epoch = this.epoch;
+    this.closeWorkspaceTools();
     this.tab = "Reader"; this.activeDocument = doc; this.requestUpdate(); await this.updateComplete;
     if (epoch !== this.epoch || !this.isConnected) return;
     const sourceUrl = context.files.downloadUrl(doc.path, { version: doc.sha256 });

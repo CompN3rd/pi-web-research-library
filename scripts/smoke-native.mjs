@@ -13,7 +13,10 @@ export async function smokeNative({ browser, url, fixture, host, errors }) {
   page.on("pageerror", error => errors.push(String(error)));
   const panel = page.locator("pi-web-library-workbench");
   const idle = async () => { await panel.locator('[aria-busy="false"]').waitFor(); assert.equal((await panel.locator('[role="alert"]').textContent()).trim(), ""); };
-  const click = async name => { await panel.getByRole("button", { name, exact: true }).click(); await idle(); };
+  const click = async name => {
+    if (["Reference", "Evidence", "Research", "Writing", "Import & export"].includes(name)) await panel.locator(".workspace-tools > summary").click();
+    await panel.getByRole("button", { name, exact: true }).click(); await idle();
+  };
   const field = name => panel.getByLabel(name, { exact: true });
   const peer = (operation, payload) => page.evaluate(({ operation, payload }) => window.researchPeer.request(operation, { version: 1, payload }), { operation, payload });
   try {
