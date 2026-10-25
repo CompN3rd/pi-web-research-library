@@ -71,7 +71,9 @@
     "pi-web",
     "research",
     "pdf",
-    "annotations"
+    "annotations",
+    "pi-web.dev-plugin",
+    "pi-web-plugin"
   ],
   "piWeb": {
     "plugins": [

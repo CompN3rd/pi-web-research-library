@@ -16,3 +16,13 @@ One workspace catalog owns the workflow; source PDFs are never rewritten. Model 
 Read [usage and greenfield cutover](docs/usage.md), [architecture and limits](docs/architecture.md), and [verification evidence](docs/verification.md). Plugins run with your account permissions, not in a sandbox. Daemon restarts interrupt active sessions and terminals.
 
 MIT; see [LICENSE](LICENSE) and [provenance](NOTICE).
+
+## Community discovery
+
+This package declares `piWeb.plugins` and the `pi-web.dev-plugin`, `pi-package`,
+and `pi-web-plugin` npm keywords required by the
+[PI WEB community directory](https://pi-web.dev/community-plugins). No separate
+registration or submission is needed. Discovery requires publishing a new public
+npm version containing this metadata; npm search indexing may take time. Source
+changes alone do not update the directory. The compatibility and installation
+requirements above still apply.
